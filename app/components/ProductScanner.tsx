@@ -41,6 +41,25 @@ type DeviceOption = {
   label: string;
 };
 
+type CameraCapabilities = MediaTrackCapabilities & {
+  torch?: boolean;
+  zoom?: {
+    min?: number;
+    max?: number;
+    step?: number;
+  };
+  focusMode?: string[];
+  focusDistance?: {
+    min?: number;
+    max?: number;
+    step?: number;
+  };
+};
+
+type CameraConstraintPatch = MediaTrackConstraints & {
+  advanced?: Array<Record<string, unknown>>;
+};
+
 function getCameraErrorMessage(error: unknown) {
   if (error instanceof DOMException) {
     if (
@@ -74,6 +93,30 @@ function getCameraErrorMessage(error: unknown) {
     : "Could not start the camera. Allow camera access and try again.";
 }
 
+function getVideoTrack(video: HTMLVideoElement | null) {
+  const stream = video?.srcObject;
+
+  if (!(stream instanceof MediaStream)) {
+    return null;
+  }
+
+  return stream.getVideoTracks()[0] ?? null;
+}
+
+async function safeApplyConstraints(
+  track: MediaStreamTrack | null,
+  constraints: CameraConstraintPatch,
+) {
+  if (!track) return false;
+
+  try {
+    await track.applyConstraints(constraints);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function ProductScanner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
@@ -92,6 +135,25 @@ export default function ProductScanner() {
     undefined,
   );
   const [scanStatus, setScanStatus] = useState("Ready to scan.");
+  const [focusStatus, setFocusStatus] = useState("");
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [zoomSupported, setZoomSupported] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [zoomMin, setZoomMin] = useState(1);
+  const [zoomMax, setZoomMax] = useState(1);
+  const [zoomStep, setZoomStep] = useState(0.1);
+
+  const resetCameraControls = useCallback(() => {
+    setTorchSupported(false);
+    setTorchOn(false);
+    setZoomSupported(false);
+    setZoom(1);
+    setZoomMin(1);
+    setZoomMax(1);
+    setZoomStep(0.1);
+    setFocusStatus("");
+  }, []);
 
   const stopScanner = useCallback(() => {
     controlsRef.current?.stop();
@@ -99,7 +161,8 @@ export default function ProductScanner() {
     isHandlingScanRef.current = false;
     setIsScanning(false);
     setScanStatus("Scanner stopped.");
-  }, []);
+    resetCameraControls();
+  }, [resetCameraControls]);
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -151,9 +214,123 @@ export default function ProductScanner() {
     }
   }, []);
 
+  const readCameraCapabilities = useCallback(async () => {
+    const track = getVideoTrack(videoRef.current);
+
+    if (!track) return;
+
+    const capabilities = track.getCapabilities() as CameraCapabilities;
+    const settings = track.getSettings() as MediaTrackSettings & {
+      zoom?: number;
+    };
+
+    if (capabilities.torch) {
+      setTorchSupported(true);
+    }
+
+    if (capabilities.zoom?.min && capabilities.zoom?.max) {
+      const min = capabilities.zoom.min;
+      const max = capabilities.zoom.max;
+      const step = capabilities.zoom.step || 0.1;
+      const currentZoom = settings.zoom || Math.min(Math.max(1.6, min), max);
+
+      setZoomSupported(max > min);
+      setZoomMin(min);
+      setZoomMax(max);
+      setZoomStep(step);
+      setZoom(currentZoom);
+
+      if (max > min && currentZoom !== settings.zoom) {
+        await safeApplyConstraints(track, {
+          advanced: [{ zoom: currentZoom }],
+        });
+      }
+    }
+
+    if (capabilities.focusMode?.includes("continuous")) {
+      await safeApplyConstraints(track, {
+        advanced: [{ focusMode: "continuous" }],
+      });
+      setFocusStatus("Autofocus is active. Tap the camera preview to refocus.");
+      return;
+    }
+
+    if (capabilities.focusMode?.includes("single-shot")) {
+      setFocusStatus("Tap the camera preview to refocus.");
+      return;
+    }
+
+    setFocusStatus(
+      "Tip: move slowly closer or farther away until the barcode becomes sharp.",
+    );
+  }, []);
+
+  const tryRefocus = useCallback(async () => {
+    if (!isScanning) return;
+
+    const track = getVideoTrack(videoRef.current);
+    if (!track) return;
+
+    const capabilities = track.getCapabilities() as CameraCapabilities;
+    setFocusStatus("Refocusing...");
+
+    if (capabilities.focusMode?.includes("single-shot")) {
+      const didFocus = await safeApplyConstraints(track, {
+        advanced: [{ focusMode: "single-shot" }],
+      });
+
+      if (didFocus) {
+        setFocusStatus("Refocus requested. Hold the barcode still.");
+        return;
+      }
+    }
+
+    if (capabilities.focusMode?.includes("continuous")) {
+      await safeApplyConstraints(track, {
+        advanced: [{ focusMode: "manual" }],
+      });
+
+      await safeApplyConstraints(track, {
+        advanced: [{ focusMode: "continuous" }],
+      });
+
+      setFocusStatus("Autofocus refreshed. Hold the barcode inside the frame.");
+      return;
+    }
+
+    setFocusStatus(
+      "This browser does not expose manual focus. Try better light or move a little farther away.",
+    );
+  }, [isScanning]);
+
+  const applyZoom = useCallback(async (nextZoom: number) => {
+    const track = getVideoTrack(videoRef.current);
+    const cleanZoom = Number(nextZoom.toFixed(2));
+
+    setZoom(cleanZoom);
+
+    await safeApplyConstraints(track, {
+      advanced: [{ zoom: cleanZoom }],
+    });
+  }, []);
+
+  const toggleTorch = useCallback(async () => {
+    const track = getVideoTrack(videoRef.current);
+    const nextTorch = !torchOn;
+
+    const didApply = await safeApplyConstraints(track, {
+      advanced: [{ torch: nextTorch }],
+    });
+
+    if (didApply) {
+      setTorchOn(nextTorch);
+    }
+  }, [torchOn]);
+
   const startScanner = useCallback(async () => {
     setError("");
     setProductResult(null);
+    resetCameraControls();
     isHandlingScanRef.current = false;
 
     if (!videoRef.current) {
@@ -171,33 +348,40 @@ export default function ProductScanner() {
         BarcodeFormat.EAN_8,
         BarcodeFormat.UPC_A,
         BarcodeFormat.UPC_E,
-        BarcodeFormat.CODE_128,
-        BarcodeFormat.CODE_39,
-        BarcodeFormat.ITF,
       ]);
       hints.set(DecodeHintType.TRY_HARDER, true);
 
       const codeReader = new BrowserMultiFormatReader(hints, {
-        delayBetweenScanAttempts: 90,
+        delayBetweenScanAttempts: 70,
         delayBetweenScanSuccess: 350,
       });
 
-      const videoConstraints: MediaTrackConstraints = deviceIdToUse
+      const baseVideoConstraints: MediaTrackConstraints = deviceIdToUse
         ? {
             deviceId: { exact: deviceIdToUse },
             width: { ideal: 1920 },
             height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
+            frameRate: { ideal: 30, max: 60 },
           }
         : {
             facingMode: { ideal: "environment" },
             width: { ideal: 1920 },
             height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
+            frameRate: { ideal: 30, max: 60 },
           };
+
+      const videoConstraints = {
+        ...baseVideoConstraints,
+        advanced: [
+          { focusMode: "continuous" },
+          { exposureMode: "continuous" },
+          { whiteBalanceMode: "continuous" },
+        ],
+      } as CameraConstraintPatch;
 
       setIsScanning(true);
       setScanStatus("Point the camera at the barcode.");
+      setFocusStatus("Starting camera focus...");
 
       const onScan = async (result: { getText: () => string } | undefined) => {
         if (!result || isHandlingScanRef.current) return;
@@ -222,13 +406,26 @@ export default function ProductScanner() {
       );
 
       controlsRef.current = controls;
+
+      window.setTimeout(() => {
+        void readCameraCapabilities();
+      }, 450);
+
       void fetchDevices();
     } catch (err) {
       setIsScanning(false);
       setScanStatus("Scanner could not start.");
       setError(getCameraErrorMessage(err));
+      resetCameraControls();
     }
-  }, [fetchDevices, fetchProduct, selectedDeviceId, stopScanner]);
+  }, [
+    fetchDevices,
+    fetchProduct,
+    readCameraCapabilities,
+    resetCameraControls,
+    selectedDeviceId,
+    stopScanner,
+  ]);
 
   const handleManualSearch = async () => {
     const cleanCode = manualBarcode.trim();
@@ -263,17 +460,55 @@ export default function ProductScanner() {
 
       <div className="scanner-layout">
         <div>
-          <div className="video-wrap">
+          <button
+            type="button"
+            className="video-wrap video-button"
+            onClick={tryRefocus}
+            disabled={!isScanning}
+            aria-label="Tap to refocus camera"
+          >
             <video ref={videoRef} className="scanner-video" muted playsInline />
             {!isScanning && (
               <div className="video-placeholder">
                 <span>Open camera</span>
               </div>
             )}
-            {isScanning && <div className="scan-frame" aria-hidden="true" />}
-          </div>
+            {isScanning && (
+              <>
+                <div className="scan-frame" aria-hidden="true" />
+                <div className="tap-focus-hint">Tap preview to refocus</div>
+              </>
+            )}
+          </button>
 
           <p className="scan-status">{scanStatus}</p>
+          {focusStatus && <p className="focus-status">{focusStatus}</p>}
+
+          {(zoomSupported || torchSupported) && isScanning && (
+            <div className="camera-tools">
+              {zoomSupported && (
+                <label className="zoom-control" htmlFor="cameraZoom">
+                  <span>Zoom</span>
+                  <input
+                    id="cameraZoom"
+                    type="range"
+                    min={zoomMin}
+                    max={zoomMax}
+                    step={zoomStep}
+                    value={zoom}
+                    onChange={(event) => void applyZoom(Number(event.target.value))}
+                  />
+                  <strong>{zoom.toFixed(1)}x</strong>
+                </label>
+              )}
+
+              {torchSupported && (
+                <button type="button" className="secondary" onClick={toggleTorch}>
+                  {torchOn ? "Turn light off" : "Turn light on"}
+                </button>
+              )}
+            </div>
+          )}
 
           {devices.length > 0 && (
             <div className="camera-select">

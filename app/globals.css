@@ -306,3 +306,79 @@ h1 {
   .scanner-video { height: 280px; }
   .scan-frame { inset: 22% 10%; }
 }
+
+.video-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  color: inherit;
+  text-align: left;
+  box-shadow: none;
+}
+
+.video-button:disabled {
+  cursor: default;
+}
+
+.video-button:not(:disabled) {
+  cursor: crosshair;
+}
+
+.video-button:hover {
+  transform: none;
+}
+
+.tap-focus-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  border: 1px solid rgba(219, 255, 228, 0.28);
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+  background: rgba(3, 14, 8, 0.72);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.focus-status {
+  margin-top: -0.4rem;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.camera-tools {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.zoom-control {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.8rem;
+  align-items: center;
+  color: var(--muted);
+}
+
+.zoom-control input[type="range"] {
+  padding: 0;
+  border: 0;
+  accent-color: var(--accent);
+  background: transparent;
+}
+
+.zoom-control strong {
+  color: var(--text);
+  min-width: 3rem;
+  text-align: right;
+}
