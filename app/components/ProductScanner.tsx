@@ -68,6 +68,17 @@ type ExtendedVideoConstraints = MediaTrackConstraints & {
 const SCANNER_REGION_ID = "health-scanner-camera-region";
 const PRODUCT_CACHE_PREFIX = "your-health-scanner:product:";
 const PRODUCT_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 30;
+const SCAN_HISTORY_KEY = "your-health-scanner:scan-history";
+const MAX_SCAN_HISTORY_ITEMS = 12;
+
+type ScanHistoryItem = {
+  code: string;
+  title: string;
+  subtitle: string;
+  type: "product" | "raw";
+  source?: string;
+  savedAt: number;
+};
 
 type CachedProductResult = {
   savedAt: number;
@@ -115,6 +126,47 @@ function writeCachedProduct(code: string, data: ProductResult) {
   } catch {
     // localStorage can be full or blocked. The app still works without cache.
   }
+}
+
+function readScanHistory() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(SCAN_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ScanHistoryItem[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveScanHistory(items: ScanHistoryItem[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(items));
+  } catch {
+    // localStorage can be full or blocked. The app still works without history.
+  }
+}
+
+function buildProductHistoryItem(code: string, data: ProductResult): ScanHistoryItem | null {
+  if (!data.found || !data.product) return null;
+
+  return {
+    code,
+    title: data.product.name || code,
+    subtitle: data.product.brand || "Saved product scan",
+    type: "product",
+    source: data.source,
+    savedAt: Date.now(),
+  };
+}
+
+function upsertScanHistoryItem(items: ScanHistoryItem[], item: ScanHistoryItem) {
+  const withoutDuplicate = items.filter((historyItem) => historyItem.code !== item.code);
+  return [item, ...withoutDuplicate].slice(0, MAX_SCAN_HISTORY_ITEMS);
 }
 
 function getCameraErrorMessage(error: unknown) {
@@ -187,6 +239,7 @@ export default function ProductScanner() {
   const [zoomMax, setZoomMax] = useState(1);
   const [zoomStep, setZoomStep] = useState(0.1);
   const [selectedFileName, setSelectedFileName] = useState("");
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>(() => readScanHistory());
 
   const resetCameraControls = useCallback(() => {
     setTorchSupported(false);
@@ -280,6 +333,17 @@ export default function ProductScanner() {
     }
   }, [selectedDeviceId]);
 
+  const rememberProduct = useCallback((code: string, data: ProductResult) => {
+    const item = buildProductHistoryItem(code, data);
+    if (!item) return;
+
+    setScanHistory((currentItems) => {
+      const nextItems = upsertScanHistoryItem(currentItems, item);
+      saveScanHistory(nextItems);
+      return nextItems;
+    });
+  }, []);
+
   const fetchProduct = useCallback(async (code: string) => {
     const cleanCode = code.trim();
 
@@ -292,6 +356,7 @@ export default function ProductScanner() {
 
     if (cachedProduct) {
       setProductResult(cachedProduct);
+      rememberProduct(cleanCode, cachedProduct);
       setScanStatus("Product loaded from saved scan.");
       return;
     }
@@ -307,13 +372,14 @@ export default function ProductScanner() {
 
       if (data.found) {
         writeCachedProduct(cleanCode, data);
+        rememberProduct(cleanCode, data);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not search product.");
     } finally {
       setLoadingProduct(false);
     }
-  }, []);
+  }, [rememberProduct]);
 
   const handleDecodedValue = useCallback(
     async (value: string, result?: Html5QrcodeResult) => {
@@ -618,6 +684,32 @@ export default function ProductScanner() {
     }
   };
 
+  const handleHistorySearch = async (item: ScanHistoryItem) => {
+    setManualBarcode(item.code);
+    setBarcode(item.code);
+    setScannedContent({
+      value: item.code,
+      format: item.type === "product" ? "Saved barcode" : "Saved code",
+      isProductCode: isLikelyProductBarcode(item.code),
+      isUrl: isLikelyUrl(item.code),
+    });
+
+    if (isLikelyProductBarcode(item.code)) {
+      setScanStatus(`Searching saved barcode ${item.code}...`);
+      await fetchProduct(item.code);
+      return;
+    }
+
+    setProductResult(null);
+    setScanStatus("Saved content is shown below.");
+  };
+
+  const clearScanHistory = () => {
+    setScanHistory([]);
+    saveScanHistory([]);
+  };
+
+
   useEffect(() => {
     return () => {
       void stopScanner();
@@ -795,6 +887,14 @@ export default function ProductScanner() {
           {productResult?.found && productResult.product && (
             <ProductInfo product={productResult.product} />
           )}
+
+          {scanHistory.length > 0 && (
+            <ScanHistoryPanel
+              items={scanHistory}
+              onSearch={(item) => void handleHistorySearch(item)}
+              onClear={clearScanHistory}
+            />
+          )}
         </div>
       </div>
     </section>
@@ -817,12 +917,54 @@ function ScannedContentCard({ content }: { content: ScannedContent }) {
   );
 }
 
+function ScanHistoryPanel({
+  items,
+  onSearch,
+  onClear,
+}: {
+  items: ScanHistoryItem[];
+  onSearch: (item: ScanHistoryItem) => void;
+  onClear: () => void;
+}) {
+  return (
+    <section className="history-card">
+      <div className="section-header-row">
+        <div>
+          <p className="eyebrow">Saved on this device</p>
+          <h2>Recent scans</h2>
+        </div>
+        <button type="button" className="secondary small-button" onClick={onClear}>
+          Clear
+        </button>
+      </div>
+      <div className="history-list">
+        {items.map((item) => (
+          <button
+            type="button"
+            className="history-item"
+            key={`${item.code}-${item.savedAt}`}
+            onClick={() => onSearch(item)}
+          >
+            <span>
+              <strong>{item.title}</strong>
+              <small>{item.subtitle}</small>
+            </span>
+            <code>{item.code}</code>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProductInfo({
   product,
 }: {
   product: NonNullable<ProductResult["product"]>;
 }) {
   const healthFlags = useMemo(() => getSimpleHealthFlags(product), [product]);
+  const dietNotes = useMemo(() => getDietAndPreferenceNotes(product), [product]);
+  const ingredientNotes = useMemo(() => getIngredientWatchList(product), [product]);
 
   return (
     <article className="result-card">
@@ -855,12 +997,12 @@ function ProductInfo({
           value={valueOrNA(product.nutriments.sugars, "g")}
         />
         <ScoreItem
-          label="Salt / 100g"
-          value={valueOrNA(product.nutriments.salt, "g")}
+          label="Carbs / 100g"
+          value={valueOrNA(product.nutriments.carbs, "g")}
         />
         <ScoreItem
-          label="Calories / 100g"
-          value={valueOrNA(product.nutriments.calories, " kcal")}
+          label="Salt / 100g"
+          value={valueOrNA(product.nutriments.salt, "g")}
         />
         <ScoreItem
           label="Protein / 100g"
@@ -868,9 +1010,42 @@ function ProductInfo({
         />
       </div>
 
+      {dietNotes.length > 0 && (
+        <section className="preference-notes">
+          <div className="section-title-block">
+            <p className="eyebrow">Personal food notes</p>
+            <h3>May matter for your diet</h3>
+            <p>
+              These notes are simple signals based on the listed nutrition,
+              allergens and ingredients. Always check the package if you have a
+              medical allergy or strict diet.
+            </p>
+          </div>
+          <div className="note-grid">
+            {dietNotes.map((note) => (
+              <article className={`note-card ${note.tone}`} key={note.title}>
+                <strong>{note.title}</strong>
+                <p>{note.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {ingredientNotes.length > 0 && (
+        <section className="ingredient-watch">
+          <h3>Ingredients some people watch</h3>
+          <div className="watch-list">
+            {ingredientNotes.map((note) => (
+              <span key={note}>{note}</span>
+            ))}
+          </div>
+        </section>
+      )}
+
       {healthFlags.length > 0 && (
         <div className="health-flags">
-          <h3>Things to notice</h3>
+          <h3>Simple health flags</h3>
           <ul>
             {healthFlags.map((flag) => (
               <li key={flag}>{flag}</li>
@@ -952,6 +1127,154 @@ function TagBlock({
       )}
     </section>
   );
+}
+
+type HealthNote = {
+  title: string;
+  body: string;
+  tone: "good" | "watch" | "alert";
+};
+
+function includesAnyText(text: string, words: string[]) {
+  const lowerText = text.toLowerCase();
+  return words.some((word) => lowerText.includes(word.toLowerCase()));
+}
+
+function hasTaggedValue(tags: string[], words: string[]) {
+  const cleanTags = tags.map((tag) => cleanTag(tag).toLowerCase());
+  return words.some((word) =>
+    cleanTags.some((tag) => tag.includes(word.toLowerCase())),
+  );
+}
+
+function getDietAndPreferenceNotes(
+  product: NonNullable<ProductResult["product"]>,
+): HealthNote[] {
+  const notes: HealthNote[] = [];
+  const ingredients = product.ingredients || "";
+  const allergens = product.allergens || [];
+  const labels = product.labels || [];
+  const carbs = product.nutriments.carbs;
+  const sugars = product.nutriments.sugars;
+  const salt = product.nutriments.salt;
+
+  if (typeof carbs === "number") {
+    if (carbs >= 10) {
+      notes.push({
+        title: "Keto / low-carb",
+        body: `This has ${carbs}g carbs per 100g, so it may not fit a strict keto or low-carb diet.`,
+        tone: "alert",
+      });
+    } else if (carbs <= 5) {
+      notes.push({
+        title: "Keto / low-carb",
+        body: `This is relatively low in carbs at ${carbs}g per 100g. Check the serving size and ingredients too.`,
+        tone: "good",
+      });
+    }
+  }
+
+  if (typeof sugars === "number") {
+    if (sugars >= 15) {
+      notes.push({
+        title: "Low sugar / no sugar goals",
+        body: `This is high in sugar at ${sugars}g per 100g. It may not suit you if you avoid sugar or manage blood sugar.`,
+        tone: "alert",
+      });
+    } else if (sugars >= 5) {
+      notes.push({
+        title: "Low sugar / no sugar goals",
+        body: `This has ${sugars}g sugar per 100g. It may be worth checking the portion size.`,
+        tone: "watch",
+      });
+    } else {
+      notes.push({
+        title: "Low sugar / no sugar goals",
+        body: `This is low in sugar at ${sugars}g per 100g. Still check if sweeteners or syrups are listed.`,
+        tone: "good",
+      });
+    }
+  }
+
+  const glutenWords = ["gluten", "wheat", "barley", "rye", "malt", "spelt"];
+  const glutenFound =
+    hasTaggedValue(allergens, glutenWords) || includesAnyText(ingredients, glutenWords);
+
+  if (glutenFound) {
+    notes.push({
+      title: "Gluten sensitive / celiac",
+      body: "This appears to contain gluten-related ingredients or allergen tags. Avoid if you need gluten-free products unless the package clearly says otherwise.",
+      tone: "alert",
+    });
+  }
+
+  const dairyWords = ["milk", "lactose", "whey", "casein", "cream", "butter", "cheese", "yoghurt", "yogurt"];
+  const dairyFound =
+    hasTaggedValue(allergens, dairyWords) || includesAnyText(ingredients, dairyWords);
+
+  if (dairyFound) {
+    notes.push({
+      title: "Dairy / lactose",
+      body: "This appears to contain milk or dairy-related ingredients. Check carefully if you avoid lactose or dairy.",
+      tone: "alert",
+    });
+  }
+
+  if (hasTaggedValue(labels, ["vegan"])) {
+    notes.push({
+      title: "Vegan",
+      body: "This product is labelled vegan in the available data.",
+      tone: "good",
+    });
+  } else if (
+    includesAnyText(ingredients, ["milk", "egg", "honey", "gelatin", "whey", "casein"])
+  ) {
+    notes.push({
+      title: "Vegan",
+      body: "This may not be vegan based on the listed ingredients. Check the package if this matters to you.",
+      tone: "watch",
+    });
+  }
+
+  if (product.novaGroup === 4) {
+    notes.push({
+      title: "Whole-food focus",
+      body: "NOVA 4 suggests this may be ultra-processed. If you prefer whole/minimally processed foods, compare with a simpler alternative.",
+      tone: "watch",
+    });
+  }
+
+  if (typeof salt === "number" && salt >= 1.5) {
+    notes.push({
+      title: "Lower salt goals",
+      body: `This is high in salt at ${salt}g per 100g. It may not suit a lower-sodium diet.`,
+      tone: "watch",
+    });
+  }
+
+  return notes;
+}
+
+function getIngredientWatchList(product: NonNullable<ProductResult["product"]>) {
+  const ingredients = product.ingredients || "";
+  const watchItems: string[] = [];
+
+  const checks: Array<[string, string[]]> = [
+    ["Added sugar / syrup", ["sugar", "syrup", "glucose", "fructose", "dextrose", "maltodextrin"]],
+    ["Artificial sweeteners", ["aspartame", "sucralose", "acesulfame", "saccharin"]],
+    ["Palm oil", ["palm oil", "palm fat"]],
+    ["Hydrogenated oils", ["hydrogenated", "partially hydrogenated"]],
+    ["Preservatives", ["preservative", "sorbate", "benzoate", "nitrite", "nitrate"]],
+    ["Artificial colours", ["colour", "color", "tartrazine", "carmoisine", "sunset yellow"]],
+  ];
+
+  for (const [label, words] of checks) {
+    if (includesAnyText(ingredients, words)) {
+      watchItems.push(label);
+    }
+  }
+
+  return watchItems;
 }
 
 function getSimpleHealthFlags(product: NonNullable<ProductResult["product"]>) {

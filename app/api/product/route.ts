@@ -194,7 +194,7 @@ async function searchOpenFoodFacts(barcode: string) {
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "YourHealthScanner/0.7 (robertwagar@gmail.com)",
+      "User-Agent": "YourHealthScanner/0.8 (robertwagar@gmail.com)",
     },
     next: { revalidate: 60 * 60 * 24 },
   });
@@ -221,7 +221,7 @@ async function searchUsda(barcode: string) {
 
   const response = await fetch(url.toString(), {
     headers: {
-      "User-Agent": "YourHealthScanner/0.7 (robertwagar@gmail.com)",
+      "User-Agent": "YourHealthScanner/0.8 (robertwagar@gmail.com)",
     },
     next: { revalidate: 60 * 60 * 24 * 7 },
   });
