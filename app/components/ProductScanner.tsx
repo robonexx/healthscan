@@ -6,6 +6,7 @@ import type {
   Html5Qrcode,
   Html5QrcodeResult,
 } from "html5-qrcode";
+import { findAdditivesInText, getAdditiveInfo } from "../data/additives";
 
 type ProductResult = {
   found: boolean;
@@ -965,6 +966,7 @@ function ProductInfo({
   const healthFlags = useMemo(() => getSimpleHealthFlags(product), [product]);
   const dietNotes = useMemo(() => getDietAndPreferenceNotes(product), [product]);
   const ingredientNotes = useMemo(() => getIngredientWatchList(product), [product]);
+  const additiveDetails = useMemo(() => getAdditiveDetails(product), [product]);
 
   return (
     <article className="result-card">
@@ -1063,11 +1065,7 @@ function ProductInfo({
         tags={product.allergens}
         emptyText="No allergens listed."
       />
-      <TagBlock
-        title="Additives"
-        tags={product.additives}
-        emptyText="No additives listed."
-      />
+      <AdditivesBlock additives={product.additives} additiveDetails={additiveDetails} />
 
       <p className="disclaimer">
         This is not medical advice. Product data can be incomplete or wrong.
@@ -1100,6 +1098,50 @@ function InfoBlock({
     <section className="info-section">
       <h3>{title}</h3>
       <p>{children || emptyText}</p>
+    </section>
+  );
+}
+
+function AdditivesBlock({
+  additives,
+  additiveDetails,
+}: {
+  additives: string[];
+  additiveDetails: ReturnType<typeof getAdditiveDetails>;
+}) {
+  return (
+    <section className="info-section additives-section">
+      <h3>Additives</h3>
+      {additiveDetails.length > 0 ? (
+        <div className="additive-grid">
+          {additiveDetails.map((item) => (
+            <article className={`additive-card ${item.info.level}`} key={item.info.code}>
+              <div className="additive-card-top">
+                <span className="additive-code">{item.info.code}</span>
+                <span className={`additive-level ${item.info.level}`}>{item.info.level}</span>
+              </div>
+              <h4>{item.info.name}</h4>
+              <p className="additive-category">{item.info.category}</p>
+              <p>{item.info.description}</p>
+              {item.info.note && <p className="additive-note">{item.info.note}</p>}
+              {item.detectedFrom === "ingredients" && (
+                <small>Detected from the ingredient text.</small>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : additives.length > 0 ? (
+        <ul>
+          {additives.map((tag) => (
+            <li key={tag}>{cleanTag(tag)}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>No additives listed.</p>
+      )}
+      <p className="mini-disclaimer">
+        Additive notes are simple explanations, not a safety judgement. Approved food additives can still matter for personal preferences, sensitivities or strict diets.
+      </p>
     </section>
   );
 }
@@ -1144,6 +1186,30 @@ function hasTaggedValue(tags: string[], words: string[]) {
   const cleanTags = tags.map((tag) => cleanTag(tag).toLowerCase());
   return words.some((word) =>
     cleanTags.some((tag) => tag.includes(word.toLowerCase())),
+  );
+}
+
+function getAdditiveDetails(product: NonNullable<ProductResult["product"]>) {
+  const byCode = new Map<
+    string,
+    { info: NonNullable<ReturnType<typeof getAdditiveInfo>>; detectedFrom: "product-data" | "ingredients" }
+  >();
+
+  for (const tag of product.additives || []) {
+    const info = getAdditiveInfo(tag);
+    if (info) {
+      byCode.set(info.code, { info, detectedFrom: "product-data" });
+    }
+  }
+
+  for (const info of findAdditivesInText(product.ingredients || "")) {
+    if (!byCode.has(info.code)) {
+      byCode.set(info.code, { info, detectedFrom: "ingredients" });
+    }
+  }
+
+  return Array.from(byCode.values()).sort((a, b) =>
+    a.info.code.localeCompare(b.info.code, undefined, { numeric: true }),
   );
 }
 

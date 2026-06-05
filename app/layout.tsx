@@ -3,15 +3,15 @@ import "./globals.css";
 import ServiceWorkerRegister from "./components/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
-  title: "Your Health Scanner",
+  title: "Your Food Scanner",
   description:
     "Scan a barcode, search product data and facts and show ingredients, nutrition, allergens and simple health flags.",
-  applicationName: "Your Health Scanner",
+  applicationName: "Your Food Scanner",
   authors: [{ name: 'Robert "Rob-One" Wägar' }],
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Your Health Scanner",
+    title: "Your Food Scanner",
   },
 };
 

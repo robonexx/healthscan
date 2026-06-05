@@ -101,3 +101,24 @@ Examples:
 - Lower salt goals
 
 Always read the package and check with a healthcare professional for allergies, illness or strict dietary needs.
+
+## Additive explanations
+
+This version includes a local E-number/additives explainer in `app/data/additives.ts`.
+
+The app now tries to explain common additives from two places:
+
+1. `additives_tags` from product data.
+2. E-numbers or additive names detected inside the ingredients text.
+
+The explanations are intentionally neutral. They are not medical advice and they do not mean an additive is automatically dangerous. They are meant to help users understand why an additive is used and what some people may choose to watch depending on diet, sensitivity or preference.
+
+## Secrets
+
+Do not commit `.env` or `.env.local`. Only `.env.example` should be committed.
+
+```env
+USDA_API_KEY=your_usda_api_key_here
+```
+
+Locally, create your own `.env.local` file. On Vercel, add `USDA_API_KEY` in Project Settings → Environment Variables.
