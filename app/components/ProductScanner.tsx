@@ -7,6 +7,7 @@ import type {
   Html5QrcodeResult,
 } from "html5-qrcode";
 import { findAdditivesInText, getAdditiveInfo } from "../data/additives";
+import { parseScannedCode, type ParsedScannedCode } from "../lib/codeParser";
 
 type ProductResult = {
   found: boolean;
@@ -45,12 +46,7 @@ type DeviceOption = {
   label: string;
 };
 
-type ScannedContent = {
-  value: string;
-  format: string;
-  isProductCode: boolean;
-  isUrl: boolean;
-};
+type ScannedContent = ParsedScannedCode;
 
 type ExtendedCameraCapabilities = MediaTrackCapabilities & {
   torch?: boolean;
@@ -192,20 +188,6 @@ function getCameraErrorMessage(error: unknown) {
   return message || "Could not start the camera. Allow camera access and try again.";
 }
 
-function isLikelyProductBarcode(value: string) {
-  const clean = value.trim();
-  return /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(clean);
-}
-
-function isLikelyUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function getFormatName(result?: Html5QrcodeResult) {
   return result?.result?.format?.formatName || "Unknown format";
 }
@@ -216,6 +198,7 @@ export default function ProductScanner() {
   const isHandlingScanRef = useRef(false);
 
   const [isScanning, setIsScanning] = useState(false);
+  const [scanLocked, setScanLocked] = useState(false);
   const [barcode, setBarcode] = useState("");
   const [manualBarcode, setManualBarcode] = useState("");
   const [productResult, setProductResult] = useState<ProductResult | null>(
@@ -301,6 +284,7 @@ export default function ProductScanner() {
     }
 
     isHandlingScanRef.current = false;
+    setScanLocked(false);
     setIsScanning(false);
     setScanStatus("Scanner stopped.");
     resetCameraControls();
@@ -388,29 +372,33 @@ export default function ProductScanner() {
       if (!cleanValue || isHandlingScanRef.current) return;
 
       isHandlingScanRef.current = true;
-      const productCode = isLikelyProductBarcode(cleanValue);
-      const url = isLikelyUrl(cleanValue);
+      setScanLocked(true);
       const format = getFormatName(result);
+      const parsedCode = parseScannedCode(cleanValue, format);
+      const displayCode = parsedCode.searchCode || parsedCode.productCode || cleanValue;
 
-      setScannedContent({
-        value: cleanValue,
-        format,
-        isProductCode: productCode,
-        isUrl: url,
-      });
-      setBarcode(cleanValue);
-      setScanStatus(`${format} found.`);
+      setScannedContent(parsedCode);
+      setBarcode(displayCode);
+      setScanStatus(`${format} captured. Hold still...`);
 
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        navigator.vibrate?.(80);
+      }
+
+      await wait(700);
       await stopScanner();
 
-      if (productCode) {
-        setScanStatus(`Barcode found: ${cleanValue}. Searching...`);
-        await fetchProduct(cleanValue);
+      if (parsedCode.searchCode) {
+        const label = parsedCode.kind === "gs1-digital-link" || parsedCode.kind === "gs1-ai"
+          ? `GTIN found: ${parsedCode.searchCode}`
+          : `Barcode found: ${parsedCode.searchCode}`;
+        setScanStatus(`${label}. Searching...`);
+        await fetchProduct(parsedCode.searchCode);
         return;
       }
 
       setProductResult(null);
-      setScanStatus("Code scanned. Raw content is shown below.");
+      setScanStatus("Code scanned. Details are shown below.");
     },
     [fetchProduct, stopScanner],
   );
@@ -543,6 +531,7 @@ export default function ProductScanner() {
     setProductResult(null);
     setScannedContent(null);
     resetCameraControls();
+    setScanLocked(false);
     isHandlingScanRef.current = false;
 
     try {
@@ -632,19 +621,16 @@ export default function ProductScanner() {
     }
 
     setError("");
-    setBarcode(cleanCode);
-    setScannedContent({
-      value: cleanCode,
-      format: "Typed code",
-      isProductCode: isLikelyProductBarcode(cleanCode),
-      isUrl: isLikelyUrl(cleanCode),
-    });
+    const parsedCode = parseScannedCode(cleanCode, "Typed code");
+    const displayCode = parsedCode.searchCode || parsedCode.productCode || cleanCode;
+    setBarcode(displayCode);
+    setScannedContent(parsedCode);
 
     await stopScanner();
 
-    if (isLikelyProductBarcode(cleanCode)) {
-      setScanStatus(`Searching barcode ${cleanCode}...`);
-      await fetchProduct(cleanCode);
+    if (parsedCode.searchCode) {
+      setScanStatus(`Searching product code ${parsedCode.searchCode}...`);
+      await fetchProduct(parsedCode.searchCode);
       return;
     }
 
@@ -688,16 +674,15 @@ export default function ProductScanner() {
   const handleHistorySearch = async (item: ScanHistoryItem) => {
     setManualBarcode(item.code);
     setBarcode(item.code);
-    setScannedContent({
-      value: item.code,
-      format: item.type === "product" ? "Saved barcode" : "Saved code",
-      isProductCode: isLikelyProductBarcode(item.code),
-      isUrl: isLikelyUrl(item.code),
-    });
+    const parsedCode = parseScannedCode(
+      item.code,
+      item.type === "product" ? "Saved barcode" : "Saved code",
+    );
+    setScannedContent(parsedCode);
 
-    if (isLikelyProductBarcode(item.code)) {
-      setScanStatus(`Searching saved barcode ${item.code}...`);
-      await fetchProduct(item.code);
+    if (parsedCode.searchCode) {
+      setScanStatus(`Searching saved product code ${parsedCode.searchCode}...`);
+      await fetchProduct(parsedCode.searchCode);
       return;
     }
 
@@ -730,11 +715,15 @@ export default function ProductScanner() {
 
       <div className="scanner-layout">
         <div>
-          <button
-            type="button"
+          <div
             className="video-wrap video-button"
-            onClick={tryRefocus}
-            disabled={!isScanning}
+            onClick={() => {
+              if (isScanning && !scanLocked) {
+                void tryRefocus();
+              }
+            }}
+            role="button"
+            tabIndex={isScanning && !scanLocked ? 0 : -1}
             aria-label="Tap to refocus camera"
           >
             <div id={SCANNER_REGION_ID} className="html5-scanner-region" />
@@ -746,10 +735,17 @@ export default function ProductScanner() {
             {isScanning && (
               <>
                 <div className="scan-frame" aria-hidden="true" />
-                <div className="tap-focus-hint">Tap preview to refocus</div>
+                <div className="tap-focus-hint">
+                  {scanLocked ? "Code captured" : "Tap preview to refocus"}
+                </div>
+                {scanLocked && (
+                  <div className="scan-captured-overlay" aria-live="polite">
+                    Code captured
+                  </div>
+                )}
               </>
             )}
-          </button>
+          </div>
 
           <p className="scan-status">{scanStatus}</p>
           {focusStatus && <p className="focus-status">{focusStatus}</p>}
@@ -869,7 +865,7 @@ export default function ProductScanner() {
             </div>
           )}
 
-          {scannedContent && !scannedContent.isProductCode && (
+          {scannedContent && (
             <ScannedContentCard content={scannedContent} />
           )}
 
@@ -903,19 +899,81 @@ export default function ProductScanner() {
 }
 
 function ScannedContentCard({ content }: { content: ScannedContent }) {
+  const hasGs1Details = content.gs1Fields.length > 0;
+
   return (
     <article className="result-card content-card">
       <p className="eyebrow">Code found</p>
-      <h2>Scanned content</h2>
-      <div className="raw-code-box">{content.value}</div>
-      <p className="brand">Format: {content.format}</p>
-      {content.isUrl && (
-        <a href={content.value} target="_blank" rel="noreferrer" className="safe-link">
-          Open link
-        </a>
+      <h2>{getScannedContentTitle(content)}</h2>
+
+      {content.searchCode && (
+        <div className="parsed-code-highlight">
+          <span>Product code used for search</span>
+          <strong>{content.searchCode}</strong>
+        </div>
       )}
+
+      {hasGs1Details && (
+        <section className="gs1-details">
+          <h3>2D / GS1 details</h3>
+          <div className="gs1-field-grid">
+            {content.gs1Fields.map((field) => (
+              <div className="gs1-field" key={`${field.ai}-${field.value}`}>
+                <span>AI {field.ai}</span>
+                <strong>{field.label}</strong>
+                <p>{field.displayValue}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="raw-code-box">{content.raw}</div>
+      <p className="brand">Format: {content.format}</p>
+
+      <div className="content-actions">
+        <button
+          type="button"
+          className="secondary small-button"
+          onClick={() => void copyText(content.raw)}
+        >
+          Copy raw code
+        </button>
+
+        {content.searchCode && (
+          <button
+            type="button"
+            className="secondary small-button"
+            onClick={() => void copyText(content.searchCode || "")}
+          >
+            Copy product code
+          </button>
+        )}
+
+        {content.isUrl && content.url && (
+          <a href={content.url} target="_blank" rel="noreferrer" className="safe-link">
+            Open link
+          </a>
+        )}
+      </div>
     </article>
   );
+}
+
+function getScannedContentTitle(content: ScannedContent) {
+  if (content.kind === "gs1-digital-link") return "GS1 Digital Link";
+  if (content.kind === "gs1-ai") return "GS1 2D code";
+  if (content.kind === "product-barcode") return "Product barcode";
+  if (content.kind === "url") return "Scanned link";
+  return "Scanned content";
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard can be blocked in some browsers. The raw value is still visible.
+  }
 }
 
 function ScanHistoryPanel({
@@ -996,19 +1054,19 @@ function ProductInfo({
         />
         <ScoreItem
           label="Sugar / 100g"
-          value={valueOrNA(product.nutriments.sugars, "g")}
+          value={formatNutrient(product.nutriments.sugars, "g")}
         />
         <ScoreItem
           label="Carbs / 100g"
-          value={valueOrNA(product.nutriments.carbs, "g")}
+          value={formatNutrient(product.nutriments.carbs, "g")}
         />
         <ScoreItem
           label="Salt / 100g"
-          value={valueOrNA(product.nutriments.salt, "g")}
+          value={formatNutrient(product.nutriments.salt, "g")}
         />
         <ScoreItem
           label="Protein / 100g"
-          value={valueOrNA(product.nutriments.protein, "g")}
+          value={formatNutrient(product.nutriments.protein, "g")}
         />
       </div>
 
@@ -1384,9 +1442,22 @@ function getSimpleHealthFlags(product: NonNullable<ProductResult["product"]>) {
   return flags;
 }
 
-function valueOrNA(value: number | null, unit: string) {
-  if (typeof value !== "number") return "N/A";
-  return `${value}${unit}`;
+function formatNutrient(value: number | null, unit: string) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "N/A";
+
+  if (Math.abs(value) >= 100) {
+    return `${Math.round(value)}${unit}`;
+  }
+
+  if (Math.abs(value) >= 10) {
+    return `${Number(value.toFixed(1))}${unit}`;
+  }
+
+  return `${Number(value.toFixed(2))}${unit}`;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function cleanTag(tag: string) {
