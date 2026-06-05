@@ -272,3 +272,9 @@ h1 {
   .video-wrap { min-height: 260px; }
   .scanner-video { height: 260px; }
 }
+
+.scan-status {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
