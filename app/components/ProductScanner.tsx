@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
 
 type ProductResult = {
   found: boolean;
@@ -43,13 +43,17 @@ export default function ProductScanner() {
   const controlsRef = useRef<IScannerControls | null>(null);
 
   const [isScanning, setIsScanning] = useState(false);
-  const [barcode, setBarcode] = useState("");
-  const [manualBarcode, setManualBarcode] = useState("3017620422003");
-  const [productResult, setProductResult] = useState<ProductResult | null>(null);
-  const [error, setError] = useState("");
+  const [barcode, setBarcode] = useState('');
+  const [manualBarcode, setManualBarcode] = useState('3017620422003');
+  const [productResult, setProductResult] = useState<ProductResult | null>(
+    null,
+  );
+  const [error, setError] = useState('');
   const [loadingProduct, setLoadingProduct] = useState(false);
   const [devices, setDevices] = useState<DeviceOption[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(
+    undefined,
+  );
 
   const stopScanner = useCallback(() => {
     controlsRef.current?.stop();
@@ -59,7 +63,8 @@ export default function ProductScanner() {
 
   const fetchDevices = useCallback(async () => {
     try {
-      const videoInputDevices = await BrowserMultiFormatReader.listVideoInputDevices();
+      const videoInputDevices =
+        await BrowserMultiFormatReader.listVideoInputDevices();
       const mappedDevices = videoInputDevices.map((device, index) => ({
         deviceId: device.deviceId,
         label: device.label || `Camera ${index + 1}`,
@@ -68,7 +73,7 @@ export default function ProductScanner() {
       setDevices(mappedDevices);
 
       const backCamera = mappedDevices.find((device) =>
-        /back|rear|environment/i.test(device.label)
+        /back|rear|environment/i.test(device.label),
       );
 
       if (!selectedDeviceId) {
@@ -82,27 +87,29 @@ export default function ProductScanner() {
   const fetchProduct = useCallback(async (code: string) => {
     if (!code) return;
 
-    setError("");
+    setError('');
     setLoadingProduct(true);
     setProductResult(null);
 
     try {
-      const response = await fetch(`/api/product?barcode=${encodeURIComponent(code)}`);
+      const response = await fetch(
+        `/api/product?barcode=${encodeURIComponent(code)}`,
+      );
       const data = (await response.json()) as ProductResult;
       setProductResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not fetch product.");
+      setError(err instanceof Error ? err.message : 'Could not fetch product.');
     } finally {
       setLoadingProduct(false);
     }
   }, []);
 
   const startScanner = useCallback(async () => {
-    setError("");
+    setError('');
     setProductResult(null);
 
     if (!videoRef.current) {
-      setError("Video element not ready.");
+      setError('Video element not ready.');
       return;
     }
 
@@ -122,7 +129,7 @@ export default function ProductScanner() {
           setBarcode(scannedCode);
           stopScanner();
           await fetchProduct(scannedCode);
-        }
+        },
       );
 
       controlsRef.current = controls;
@@ -131,7 +138,7 @@ export default function ProductScanner() {
       setError(
         err instanceof Error
           ? err.message
-          : "Could not start camera scanner. Test on localhost or HTTPS and allow camera permission."
+          : 'Could not start camera scanner. Test on localhost or HTTPS and allow camera permission.',
       );
     }
   }, [fetchDevices, fetchProduct, selectedDeviceId, stopScanner]);
@@ -140,7 +147,7 @@ export default function ProductScanner() {
     const cleanCode = manualBarcode.trim();
 
     if (!cleanCode) {
-      setError("Write a barcode first.");
+      setError('Write a barcode first.');
       return;
     }
 
@@ -158,97 +165,101 @@ export default function ProductScanner() {
   }, [fetchDevices, stopScanner]);
 
   return (
-    <section className="scanner-card">
-      <header className="scanner-header">
-        <p className="eyebrow">Next.js PWA MVP</p>
+    <section className='scanner-card'>
+      <header className='scanner-header'>
+        <p className='eyebrow'>Next.js PWA MVP</p>
         <h1>Product Scanner</h1>
         <p>
-          Scan a barcode, fetch product data from Open Food Facts and show ingredients,
-          nutrition, allergens and simple health flags.
+          Scan a barcode, fetch product data from Open Food Facts and show
+          ingredients, nutrition, allergens and simple health flags.
         </p>
       </header>
 
-      <div className="scanner-layout">
+      <div className='scanner-layout'>
         <div>
-          <div className="video-wrap">
-            <video ref={videoRef} className="scanner-video" muted playsInline />
+          <div className='video-wrap'>
+            <video ref={videoRef} className='scanner-video' muted playsInline />
             {!isScanning && (
-              <div className="video-placeholder">
+              <div className='video-placeholder'>
                 <span>Camera preview</span>
               </div>
             )}
-            {isScanning && <div className="scan-frame" aria-hidden="true" />}
+            {isScanning && <div className='scan-frame' aria-hidden='true' />}
           </div>
 
           {devices.length > 0 && (
-            <div className="camera-select">
-              <label htmlFor="camera">Camera</label>
+            <div className='camera-select'>
+              <label htmlFor='camera'>Camera</label>
               <select
-                id="camera"
-                value={selectedDeviceId || ""}
-                onChange={(event) => setSelectedDeviceId(event.target.value || undefined)}
-                disabled={isScanning}
+                value={selectedDeviceId}
+                onChange={(event) => setSelectedDeviceId(event.target.value)}
               >
-                {devices.map((device) => (
-                  <option key={device.deviceId} value={device.deviceId}>
-                    {device.label}
-                  </option>
-                ))}
+                {devices.map((device, index) => {
+                  const safeKey = device.deviceId
+                    ? `${device.deviceId}-${index}`
+                    : `camera-${index}`;
+
+                  return (
+                    <option key={safeKey} value={device.deviceId}>
+                      {device.label || `Camera ${index + 1}`}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
 
-          <div className="actions">
+          <div className='actions'>
             {!isScanning ? (
-              <button type="button" onClick={startScanner}>
+              <button type='button' onClick={startScanner}>
                 Start scanner
               </button>
             ) : (
-              <button type="button" onClick={stopScanner} className="secondary">
+              <button type='button' onClick={stopScanner} className='secondary'>
                 Stop scanner
               </button>
             )}
           </div>
 
-          <div className="manual-search">
-            <label htmlFor="manualBarcode">Or test with barcode</label>
+          <div className='manual-search'>
+            <label htmlFor='manualBarcode'>Or test with barcode</label>
             <div>
               <input
-                id="manualBarcode"
+                id='manualBarcode'
                 value={manualBarcode}
                 onChange={(event) => setManualBarcode(event.target.value)}
-                placeholder="Example: 3017620422003"
-                inputMode="numeric"
+                placeholder='Example: 3017620422003'
+                inputMode='numeric'
               />
-              <button type="button" onClick={handleManualSearch}>
+              <button type='button' onClick={handleManualSearch}>
                 Search
               </button>
             </div>
           </div>
 
           {barcode && (
-            <p className="barcode">
+            <p className='barcode'>
               Last barcode: <strong>{barcode}</strong>
             </p>
           )}
 
-          {loadingProduct && <p className="status">Loading product...</p>}
-          {error && <p className="error">{error}</p>}
+          {loadingProduct && <p className='status'>Loading product...</p>}
+          {error && <p className='error'>{error}</p>}
         </div>
 
-        <div className="result-area">
+        <div className='result-area'>
           {!productResult && !loadingProduct && (
-            <div className="empty-state">
+            <div className='empty-state'>
               <h2>Ready to scan</h2>
               <p>
-                Use your phone camera or search manually. Camera access needs localhost
-                in dev or HTTPS in production.
+                Use your phone camera or search manually. Camera access needs
+                localhost in dev or HTTPS in production.
               </p>
             </div>
           )}
 
           {productResult && !productResult.found && (
-            <div className="result-card warning">
+            <div className='result-card warning'>
               <h2>Product not found</h2>
               <p>{productResult.message}</p>
               <p>Barcode: {productResult.barcode}</p>
@@ -267,38 +278,56 @@ export default function ProductScanner() {
 function ProductInfo({
   product,
 }: {
-  product: NonNullable<ProductResult["product"]>;
+  product: NonNullable<ProductResult['product']>;
 }) {
   const healthFlags = useMemo(() => getSimpleHealthFlags(product), [product]);
 
   return (
-    <article className="result-card">
-      <div className="product-top">
+    <article className='result-card'>
+      <div className='product-top'>
         {product.image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={product.image} alt={product.name} />
         ) : (
-          <div className="image-fallback">No image</div>
+          <div className='image-fallback'>No image</div>
         )}
 
         <div>
-          <p className="eyebrow">Product found</p>
+          <p className='eyebrow'>Product found</p>
           <h2>{product.name}</h2>
-          {product.brand && <p className="brand">{product.brand}</p>}
+          {product.brand && <p className='brand'>{product.brand}</p>}
         </div>
       </div>
 
-      <div className="score-grid">
-        <ScoreItem label="Nutri-Score" value={product.nutriscore?.toUpperCase() || "N/A"} />
-        <ScoreItem label="NOVA" value={product.novaGroup?.toString() || "N/A"} />
-        <ScoreItem label="Sugar / 100g" value={valueOrNA(product.nutriments.sugars, "g")} />
-        <ScoreItem label="Salt / 100g" value={valueOrNA(product.nutriments.salt, "g")} />
-        <ScoreItem label="Calories / 100g" value={valueOrNA(product.nutriments.calories, " kcal")} />
-        <ScoreItem label="Protein / 100g" value={valueOrNA(product.nutriments.protein, "g")} />
+      <div className='score-grid'>
+        <ScoreItem
+          label='Nutri-Score'
+          value={product.nutriscore?.toUpperCase() || 'N/A'}
+        />
+        <ScoreItem
+          label='NOVA'
+          value={product.novaGroup?.toString() || 'N/A'}
+        />
+        <ScoreItem
+          label='Sugar / 100g'
+          value={valueOrNA(product.nutriments.sugars, 'g')}
+        />
+        <ScoreItem
+          label='Salt / 100g'
+          value={valueOrNA(product.nutriments.salt, 'g')}
+        />
+        <ScoreItem
+          label='Calories / 100g'
+          value={valueOrNA(product.nutriments.calories, ' kcal')}
+        />
+        <ScoreItem
+          label='Protein / 100g'
+          value={valueOrNA(product.nutriments.protein, 'g')}
+        />
       </div>
 
       {healthFlags.length > 0 && (
-        <div className="health-flags">
+        <div className='health-flags'>
           <h3>Things to notice</h3>
           <ul>
             {healthFlags.map((flag) => (
@@ -308,17 +337,25 @@ function ProductInfo({
         </div>
       )}
 
-      <InfoBlock title="Ingredients" emptyText="No ingredients found.">
+      <InfoBlock title='Ingredients' emptyText='No ingredients found.'>
         {product.ingredients}
       </InfoBlock>
 
-      <TagBlock title="Allergens" tags={product.allergens} emptyText="No allergens listed." />
-      <TagBlock title="Additives" tags={product.additives} emptyText="No additives listed." />
+      <TagBlock
+        title='Allergens'
+        tags={product.allergens}
+        emptyText='No allergens listed.'
+      />
+      <TagBlock
+        title='Additives'
+        tags={product.additives}
+        emptyText='No additives listed.'
+      />
 
-      <p className="disclaimer">
-        This is not medical advice. Product data can be incomplete or wrong. Always
-        read the package and check with a healthcare professional if you have allergies,
-        illness or special dietary needs.
+      <p className='disclaimer'>
+        This is not medical advice. Product data can be incomplete or wrong.
+        Always read the package and check with a healthcare professional if you
+        have allergies, illness or special dietary needs.
       </p>
     </article>
   );
@@ -343,7 +380,7 @@ function InfoBlock({
   emptyText: string;
 }) {
   return (
-    <section className="info-section">
+    <section className='info-section'>
       <h3>{title}</h3>
       <p>{children || emptyText}</p>
     </section>
@@ -360,7 +397,7 @@ function TagBlock({
   emptyText: string;
 }) {
   return (
-    <section className="info-section">
+    <section className='info-section'>
       <h3>{title}</h3>
       {tags.length > 0 ? (
         <ul>
@@ -375,41 +412,52 @@ function TagBlock({
   );
 }
 
-function getSimpleHealthFlags(product: NonNullable<ProductResult["product"]>) {
+function getSimpleHealthFlags(product: NonNullable<ProductResult['product']>) {
   const flags: string[] = [];
 
   if (product.novaGroup === 4) {
-    flags.push("NOVA 4: This product may be ultra-processed.");
+    flags.push('NOVA 4: This product may be ultra-processed.');
   }
 
-  if (product.nutriscore && ["d", "e"].includes(product.nutriscore.toLowerCase())) {
-    flags.push(`Nutri-Score ${product.nutriscore.toUpperCase()}: lower nutrition rating.`);
+  if (
+    product.nutriscore &&
+    ['d', 'e'].includes(product.nutriscore.toLowerCase())
+  ) {
+    flags.push(
+      `Nutri-Score ${product.nutriscore.toUpperCase()}: lower nutrition rating.`,
+    );
   }
 
-  if (typeof product.nutriments.sugars === "number" && product.nutriments.sugars >= 15) {
-    flags.push("High sugar level per 100g.");
+  if (
+    typeof product.nutriments.sugars === 'number' &&
+    product.nutriments.sugars >= 15
+  ) {
+    flags.push('High sugar level per 100g.');
   }
 
-  if (typeof product.nutriments.salt === "number" && product.nutriments.salt >= 1.5) {
-    flags.push("High salt level per 100g.");
+  if (
+    typeof product.nutriments.salt === 'number' &&
+    product.nutriments.salt >= 1.5
+  ) {
+    flags.push('High salt level per 100g.');
   }
 
   if (product.additives.length >= 5) {
-    flags.push("Contains several listed additives.");
+    flags.push('Contains several listed additives.');
   }
 
   if (product.allergens.length > 0) {
-    flags.push("Contains listed allergens. Check carefully if sensitive.");
+    flags.push('Contains listed allergens. Check carefully if sensitive.');
   }
 
   return flags;
 }
 
 function valueOrNA(value: number | null, unit: string) {
-  if (typeof value !== "number") return "N/A";
+  if (typeof value !== 'number') return 'N/A';
   return `${value}${unit}`;
 }
 
 function cleanTag(tag: string) {
-  return tag.replace(/^en:/, "").replaceAll("-", " ");
+  return tag.replace(/^en:/, '').replaceAll('-', ' ');
 }
