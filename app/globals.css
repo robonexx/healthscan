@@ -718,3 +718,84 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+.result-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 8, 4, 0.72);
+  backdrop-filter: blur(14px);
+}
+
+.result-modal {
+  width: min(100%, 860px);
+  max-height: min(88vh, 900px);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  border: 1px solid rgba(130, 232, 165, 0.34);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at top left, rgba(94, 211, 139, 0.22), transparent 34%),
+    var(--card);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+}
+
+.result-modal-header,
+.result-modal-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-modal-header h2 {
+  margin-bottom: 0;
+}
+
+.result-modal-body {
+  overflow: auto;
+  padding: 1rem;
+}
+
+.result-modal-body .result-card:first-child {
+  margin-top: 0;
+}
+
+.result-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.modal-status-card {
+  border-color: rgba(94, 211, 139, 0.38);
+}
+
+@media (max-width: 700px) {
+  .result-modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .result-modal {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 24px 24px 0 0;
+  }
+
+  .result-modal-header,
+  .result-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .result-modal-actions button {
+    width: 100%;
+  }
+}

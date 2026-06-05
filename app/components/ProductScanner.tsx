@@ -7,7 +7,11 @@ import type {
   Html5QrcodeResult,
 } from "html5-qrcode";
 import { findAdditivesInText, getAdditiveInfo } from "../data/additives";
-import { parseScannedCode, type ParsedScannedCode } from "../lib/codeParser";
+import {
+  isStrictProductBarcode,
+  parseScannedCode,
+  type ParsedScannedCode,
+} from "../lib/codeParser";
 
 type ProductResult = {
   found: boolean;
@@ -207,6 +211,7 @@ export default function ProductScanner() {
   const [scannedContent, setScannedContent] = useState<ScannedContent | null>(
     null,
   );
+  const [isResultModalOpen, setIsResultModalOpen] = useState(false);
   const [error, setError] = useState("");
   const [loadingProduct, setLoadingProduct] = useState(false);
   const [devices, setDevices] = useState<DeviceOption[]>([]);
@@ -371,14 +376,23 @@ export default function ProductScanner() {
       const cleanValue = value.trim();
       if (!cleanValue || isHandlingScanRef.current) return;
 
+      const format = getFormatName(result);
+      const numericValue = cleanValue.replace(/\s/g, "");
+
+      if (/^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(numericValue) && !isStrictProductBarcode(numericValue)) {
+        setScanStatus("A number-like code was detected, but it did not pass barcode validation. Keep scanning.");
+        return;
+      }
+
       isHandlingScanRef.current = true;
       setScanLocked(true);
-      const format = getFormatName(result);
       const parsedCode = parseScannedCode(cleanValue, format);
       const displayCode = parsedCode.searchCode || parsedCode.productCode || cleanValue;
 
       setScannedContent(parsedCode);
       setBarcode(displayCode);
+      setProductResult(null);
+      setIsResultModalOpen(true);
       setScanStatus(`${format} captured. Hold still...`);
 
       if (typeof navigator !== "undefined" && "vibrate" in navigator) {
@@ -398,7 +412,7 @@ export default function ProductScanner() {
       }
 
       setProductResult(null);
-      setScanStatus("Code scanned. Details are shown below.");
+      setScanStatus("Code scanned. Details are shown in the popup.");
     },
     [fetchProduct, stopScanner],
   );
@@ -625,6 +639,7 @@ export default function ProductScanner() {
     const displayCode = parsedCode.searchCode || parsedCode.productCode || cleanCode;
     setBarcode(displayCode);
     setScannedContent(parsedCode);
+    setIsResultModalOpen(true);
 
     await stopScanner();
 
@@ -679,6 +694,7 @@ export default function ProductScanner() {
       item.type === "product" ? "Saved barcode" : "Saved code",
     );
     setScannedContent(parsedCode);
+    setIsResultModalOpen(true);
 
     if (parsedCode.searchCode) {
       setScanStatus(`Searching saved product code ${parsedCode.searchCode}...`);
@@ -894,7 +910,119 @@ export default function ProductScanner() {
           )}
         </div>
       </div>
+
+      <ResultModal
+        isOpen={isResultModalOpen}
+        onClose={() => setIsResultModalOpen(false)}
+        onScanAgain={() => {
+          setIsResultModalOpen(false);
+          void startScanner();
+        }}
+        scannedContent={scannedContent}
+        productResult={productResult}
+        loadingProduct={loadingProduct}
+        error={error}
+      />
     </section>
+  );
+}
+
+
+function ResultModal({
+  isOpen,
+  onClose,
+  onScanAgain,
+  scannedContent,
+  productResult,
+  loadingProduct,
+  error,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onScanAgain: () => void;
+  scannedContent: ScannedContent | null;
+  productResult: ProductResult | null;
+  loadingProduct: boolean;
+  error: string;
+}) {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="result-modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="result-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Scan result"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="result-modal-header">
+          <div>
+            <p className="eyebrow">Scan result</p>
+            <h2>{loadingProduct ? "Searching product..." : "Result captured"}</h2>
+          </div>
+          <button type="button" className="secondary small-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="result-modal-body">
+          {scannedContent && <ScannedContentCard content={scannedContent} />}
+
+          {loadingProduct && (
+            <div className="result-card modal-status-card">
+              <h3>Searching product data</h3>
+              <p>Hold on while the app checks the product code.</p>
+            </div>
+          )}
+
+          {error && <p className="error">{error}</p>}
+
+          {productResult && !productResult.found && (
+            <div className="result-card warning">
+              <h2>Product not found</h2>
+              <p>{productResult.message}</p>
+              <p>Barcode: {productResult.barcode}</p>
+              <p>
+                The code was read, but no matching product data was found. Try scanning
+                again, or enter the barcode manually if the printed number looks different.
+              </p>
+            </div>
+          )}
+
+          {productResult?.found && productResult.product && (
+            <ProductInfo product={productResult.product} />
+          )}
+        </div>
+
+        <div className="result-modal-actions">
+          <button type="button" onClick={onScanAgain}>
+            Scan again
+          </button>
+          <button type="button" className="secondary" onClick={onClose}>
+            Keep result
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

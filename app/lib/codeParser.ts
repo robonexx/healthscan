@@ -89,6 +89,29 @@ export function isProductBarcode(value: string) {
   return /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(value.trim());
 }
 
+export function isValidGtinChecksum(value: string) {
+  const clean = value.replace(/\D/g, "");
+
+  if (![8, 12, 13, 14].includes(clean.length)) return false;
+
+  const digits = clean.split("").map(Number);
+  const checkDigit = digits.pop();
+
+  if (typeof checkDigit !== "number" || digits.some(Number.isNaN)) return false;
+
+  const sum = digits
+    .reverse()
+    .reduce((total, digit, index) => total + digit * (index % 2 === 0 ? 3 : 1), 0);
+
+  const calculated = (10 - (sum % 10)) % 10;
+  return calculated === checkDigit;
+}
+
+export function isStrictProductBarcode(value: string) {
+  const clean = value.replace(/\s/g, "");
+  return /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(clean) && isValidGtinChecksum(clean);
+}
+
 export function normalizeGtinForSearch(gtin: string) {
   const clean = gtin.replace(/\D/g, "");
   if (clean.length === 14 && clean.startsWith("0")) return clean.slice(1);
