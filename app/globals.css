@@ -382,3 +382,61 @@ h1 {
   min-width: 3rem;
   text-align: right;
 }
+
+.html5-scanner-region {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: #020704;
+}
+
+.html5-scanner-region video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+.html5-scanner-region canvas {
+  display: none !important;
+}
+
+.file-scan {
+  margin-top: 1rem;
+}
+
+.file-scan label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+}
+
+.file-scan input[type="file"] {
+  border-radius: 18px;
+}
+
+.raw-code-box {
+  width: 100%;
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(5, 20, 11, 0.52);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.safe-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #06110b;
+  font-weight: 900;
+  text-decoration: none;
+}

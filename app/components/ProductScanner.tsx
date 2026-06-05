@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
-import { BarcodeFormat, DecodeHintType } from "@zxing/library";
-import type { IScannerControls } from "@zxing/browser";
+import type {
+  CameraDevice,
+  Html5Qrcode,
+  Html5QrcodeResult,
+} from "html5-qrcode";
 
 type ProductResult = {
   found: boolean;
@@ -41,7 +43,14 @@ type DeviceOption = {
   label: string;
 };
 
-type CameraCapabilities = MediaTrackCapabilities & {
+type ScannedContent = {
+  value: string;
+  format: string;
+  isProductCode: boolean;
+  isUrl: boolean;
+};
+
+type ExtendedCameraCapabilities = MediaTrackCapabilities & {
   torch?: boolean;
   zoom?: {
     min?: number;
@@ -49,83 +58,65 @@ type CameraCapabilities = MediaTrackCapabilities & {
     step?: number;
   };
   focusMode?: string[];
-  focusDistance?: {
-    min?: number;
-    max?: number;
-    step?: number;
-  };
 };
 
-type CameraConstraintPatch = MediaTrackConstraints & {
+type ExtendedVideoConstraints = MediaTrackConstraints & {
   advanced?: Array<Record<string, unknown>>;
 };
 
+const SCANNER_REGION_ID = "health-scanner-camera-region";
+
 function getCameraErrorMessage(error: unknown) {
-  if (error instanceof DOMException) {
-    if (
-      error.name === "NotAllowedError" ||
-      error.name === "PermissionDeniedError"
-    ) {
-      return "Camera access was denied. Allow camera access in your browser settings and try again.";
-    }
+  const message = error instanceof Error ? error.message : String(error);
 
-    if (
-      error.name === "NotFoundError" ||
-      error.name === "DevicesNotFoundError"
-    ) {
-      return "No camera was found on this device.";
-    }
-
-    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-      return "The camera could not be started. Close other apps using the camera and try again.";
-    }
-
-    if (
-      error.name === "OverconstrainedError" ||
-      error.name === "ConstraintNotSatisfiedError"
-    ) {
-      return "The selected camera could not use the requested settings. Try another camera.";
-    }
+  if (/NotAllowed|Permission|denied/i.test(message)) {
+    return "Camera access was denied. Allow camera access in your browser settings and try again.";
   }
 
-  return error instanceof Error
-    ? error.message
-    : "Could not start the camera. Allow camera access and try again.";
-}
-
-function getVideoTrack(video: HTMLVideoElement | null) {
-  const stream = video?.srcObject;
-
-  if (!(stream instanceof MediaStream)) {
-    return null;
+  if (/NotFound|DevicesNotFound/i.test(message)) {
+    return "No camera was found on this device.";
   }
 
-  return stream.getVideoTracks()[0] ?? null;
+  if (/NotReadable|TrackStart/i.test(message)) {
+    return "The camera could not be started. Close other apps using the camera and try again.";
+  }
+
+  if (/Overconstrained|Constraint/i.test(message)) {
+    return "The selected camera could not use the requested settings. Try another camera or lower the zoom.";
+  }
+
+  return message || "Could not start the camera. Allow camera access and try again.";
 }
 
-async function safeApplyConstraints(
-  track: MediaStreamTrack | null,
-  constraints: CameraConstraintPatch,
-) {
-  if (!track) return false;
+function isLikelyProductBarcode(value: string) {
+  const clean = value.trim();
+  return /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(clean);
+}
 
+function isLikelyUrl(value: string) {
   try {
-    await track.applyConstraints(constraints);
-    return true;
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
 }
 
+function getFormatName(result?: Html5QrcodeResult) {
+  return result?.result?.format?.formatName || "Unknown format";
+}
+
 export default function ProductScanner() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const controlsRef = useRef<IScannerControls | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
   const isHandlingScanRef = useRef(false);
 
   const [isScanning, setIsScanning] = useState(false);
   const [barcode, setBarcode] = useState("");
   const [manualBarcode, setManualBarcode] = useState("");
   const [productResult, setProductResult] = useState<ProductResult | null>(
+    null,
+  );
+  const [scannedContent, setScannedContent] = useState<ScannedContent | null>(
     null,
   );
   const [error, setError] = useState("");
@@ -155,9 +146,53 @@ export default function ProductScanner() {
     setFocusStatus("");
   }, []);
 
-  const stopScanner = useCallback(() => {
-    controlsRef.current?.stop();
-    controlsRef.current = null;
+  const getOrCreateScanner = useCallback(async () => {
+    if (scannerRef.current) {
+      return scannerRef.current;
+    }
+
+    const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import(
+      "html5-qrcode"
+    );
+
+    const scanner = new Html5Qrcode(SCANNER_REGION_ID, {
+      verbose: false,
+      useBarCodeDetectorIfSupported: true,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.DATA_MATRIX,
+        Html5QrcodeSupportedFormats.PDF_417,
+      ],
+    });
+
+    scannerRef.current = scanner;
+    return scanner;
+  }, []);
+
+  const stopScanner = useCallback(async () => {
+    const scanner = scannerRef.current;
+
+    if (scanner?.isScanning) {
+      try {
+        await scanner.stop();
+      } catch {
+        // Scanner may already be stopped by the browser or by a previous event.
+      }
+    }
+
+    try {
+      scanner?.clear();
+    } catch {
+      // Clear can fail if scanner is still transitioning. Safe to ignore.
+    }
+
     isHandlingScanRef.current = false;
     setIsScanning(false);
     setScanStatus("Scanner stopped.");
@@ -166,11 +201,11 @@ export default function ProductScanner() {
 
   const fetchDevices = useCallback(async () => {
     try {
-      const videoInputDevices =
-        await BrowserMultiFormatReader.listVideoInputDevices();
+      const { Html5Qrcode } = await import("html5-qrcode");
+      const videoInputDevices = (await Html5Qrcode.getCameras()) as CameraDevice[];
       const mappedDevices = videoInputDevices.map((device, index) => ({
-        key: `${device.deviceId || device.label || "camera"}-${index}`,
-        deviceId: device.deviceId,
+        key: `${device.id || device.label || "camera"}-${index}`,
+        deviceId: device.id,
         label: device.label || `Camera ${index + 1}`,
       }));
 
@@ -214,88 +249,122 @@ export default function ProductScanner() {
     }
   }, []);
 
-  const readCameraCapabilities = useCallback(async () => {
-    const track = getVideoTrack(videoRef.current);
+  const handleDecodedValue = useCallback(
+    async (value: string, result?: Html5QrcodeResult) => {
+      const cleanValue = value.trim();
+      if (!cleanValue || isHandlingScanRef.current) return;
 
-    if (!track) return;
+      isHandlingScanRef.current = true;
+      const productCode = isLikelyProductBarcode(cleanValue);
+      const url = isLikelyUrl(cleanValue);
+      const format = getFormatName(result);
 
-    const capabilities = track.getCapabilities() as CameraCapabilities;
-    const settings = track.getSettings() as MediaTrackSettings & {
-      zoom?: number;
-    };
-
-    if (capabilities.torch) {
-      setTorchSupported(true);
-    }
-
-    if (capabilities.zoom?.min && capabilities.zoom?.max) {
-      const min = capabilities.zoom.min;
-      const max = capabilities.zoom.max;
-      const step = capabilities.zoom.step || 0.1;
-      const currentZoom = settings.zoom || Math.min(Math.max(1.6, min), max);
-
-      setZoomSupported(max > min);
-      setZoomMin(min);
-      setZoomMax(max);
-      setZoomStep(step);
-      setZoom(currentZoom);
-
-      if (max > min && currentZoom !== settings.zoom) {
-        await safeApplyConstraints(track, {
-          advanced: [{ zoom: currentZoom }],
-        });
-      }
-    }
-
-    if (capabilities.focusMode?.includes("continuous")) {
-      await safeApplyConstraints(track, {
-        advanced: [{ focusMode: "continuous" }],
+      setScannedContent({
+        value: cleanValue,
+        format,
+        isProductCode: productCode,
+        isUrl: url,
       });
-      setFocusStatus("Autofocus is active. Tap the camera preview to refocus.");
-      return;
-    }
+      setBarcode(cleanValue);
+      setScanStatus(`${format} found.`);
 
-    if (capabilities.focusMode?.includes("single-shot")) {
-      setFocusStatus("Tap the camera preview to refocus.");
-      return;
-    }
+      await stopScanner();
 
-    setFocusStatus(
-      "Tip: move slowly closer or farther away until the barcode becomes sharp.",
-    );
+      if (productCode) {
+        setScanStatus(`Barcode found: ${cleanValue}. Searching...`);
+        await fetchProduct(cleanValue);
+        return;
+      }
+
+      setProductResult(null);
+      setScanStatus("Code scanned. Raw content is shown below.");
+    },
+    [fetchProduct, stopScanner],
+  );
+
+  const readCameraCapabilities = useCallback(async () => {
+    const scanner = scannerRef.current;
+    if (!scanner?.isScanning) return;
+
+    try {
+      const capabilities =
+        scanner.getRunningTrackCapabilities() as ExtendedCameraCapabilities;
+      const settings = scanner.getRunningTrackSettings() as MediaTrackSettings & {
+        zoom?: number;
+      };
+
+      if (capabilities.torch) {
+        setTorchSupported(true);
+      }
+
+      if (capabilities.zoom?.min && capabilities.zoom?.max) {
+        const min = capabilities.zoom.min;
+        const max = capabilities.zoom.max;
+        const step = capabilities.zoom.step || 0.1;
+        const currentZoom = settings.zoom || Math.min(Math.max(1.4, min), max);
+
+        setZoomSupported(max > min);
+        setZoomMin(min);
+        setZoomMax(max);
+        setZoomStep(step);
+        setZoom(currentZoom);
+
+        if (max > min && currentZoom !== settings.zoom) {
+          await scanner.applyVideoConstraints({
+            advanced: [{ zoom: currentZoom }],
+          } as ExtendedVideoConstraints);
+        }
+      }
+
+      if (capabilities.focusMode?.includes("continuous")) {
+        await scanner.applyVideoConstraints({
+          advanced: [{ focusMode: "continuous" }],
+        } as ExtendedVideoConstraints);
+        setFocusStatus("Autofocus is active. Tap the camera preview to refocus.");
+        return;
+      }
+
+      if (capabilities.focusMode?.includes("single-shot")) {
+        setFocusStatus("Tap the camera preview to refocus.");
+        return;
+      }
+
+      setFocusStatus(
+        "Tip: move slowly closer or farther away until the barcode becomes sharp.",
+      );
+    } catch {
+      setFocusStatus(
+        "Tip: use strong light and move slowly until the barcode becomes sharp.",
+      );
+    }
   }, []);
 
   const tryRefocus = useCallback(async () => {
-    if (!isScanning) return;
+    const scanner = scannerRef.current;
+    if (!isScanning || !scanner?.isScanning) return;
 
-    const track = getVideoTrack(videoRef.current);
-    if (!track) return;
+    try {
+      const capabilities =
+        scanner.getRunningTrackCapabilities() as ExtendedCameraCapabilities;
+      setFocusStatus("Refocusing...");
 
-    const capabilities = track.getCapabilities() as CameraCapabilities;
-    setFocusStatus("Refocusing...");
-
-    if (capabilities.focusMode?.includes("single-shot")) {
-      const didFocus = await safeApplyConstraints(track, {
-        advanced: [{ focusMode: "single-shot" }],
-      });
-
-      if (didFocus) {
-        setFocusStatus("Refocus requested. Hold the barcode still.");
+      if (capabilities.focusMode?.includes("single-shot")) {
+        await scanner.applyVideoConstraints({
+          advanced: [{ focusMode: "single-shot" }],
+        } as ExtendedVideoConstraints);
+        setFocusStatus("Refocus requested. Hold the code still.");
         return;
       }
-    }
 
-    if (capabilities.focusMode?.includes("continuous")) {
-      await safeApplyConstraints(track, {
-        advanced: [{ focusMode: "manual" }],
-      });
-
-      await safeApplyConstraints(track, {
-        advanced: [{ focusMode: "continuous" }],
-      });
-
-      setFocusStatus("Autofocus refreshed. Hold the barcode inside the frame.");
-      return;
+      if (capabilities.focusMode?.includes("continuous")) {
+        await scanner.applyVideoConstraints({
+          advanced: [{ focusMode: "continuous" }],
+        } as ExtendedVideoConstraints);
+        setFocusStatus("Autofocus refreshed. Hold the code inside the frame.");
+        return;
+      }
+    } catch {
+      // Fall through to friendly message below.
     }
 
     setFocusStatus(
@@ -304,112 +373,106 @@ export default function ProductScanner() {
   }, [isScanning]);
 
   const applyZoom = useCallback(async (nextZoom: number) => {
-    const track = getVideoTrack(videoRef.current);
+    const scanner = scannerRef.current;
     const cleanZoom = Number(nextZoom.toFixed(2));
 
     setZoom(cleanZoom);
 
-    await safeApplyConstraints(track, {
-      advanced: [{ zoom: cleanZoom }],
-    });
+    if (!scanner?.isScanning) return;
+
+    try {
+      await scanner.applyVideoConstraints({
+        advanced: [{ zoom: cleanZoom }],
+      } as ExtendedVideoConstraints);
+    } catch {
+      setFocusStatus("Zoom could not be changed on this camera.");
+    }
   }, []);
 
   const toggleTorch = useCallback(async () => {
-    const track = getVideoTrack(videoRef.current);
+    const scanner = scannerRef.current;
+    if (!scanner?.isScanning) return;
+
     const nextTorch = !torchOn;
 
-    const didApply = await safeApplyConstraints(track, {
-      advanced: [{ torch: nextTorch }],
-    });
-
-    if (didApply) {
+    try {
+      await scanner.applyVideoConstraints({
+        advanced: [{ torch: nextTorch }],
+      } as ExtendedVideoConstraints);
       setTorchOn(nextTorch);
+    } catch {
+      setFocusStatus("Light could not be changed on this camera.");
     }
   }, [torchOn]);
 
   const startScanner = useCallback(async () => {
     setError("");
     setProductResult(null);
+    setScannedContent(null);
     resetCameraControls();
     isHandlingScanRef.current = false;
 
-    if (!videoRef.current) {
-      setError("Camera preview is not ready yet.");
-      return;
-    }
-
     try {
+      const scanner = await getOrCreateScanner();
+      if (scanner.isScanning) {
+        await scanner.stop();
+      }
+
       const preferredDeviceId = await fetchDevices();
       const deviceIdToUse = selectedDeviceId || preferredDeviceId;
 
-      const hints = new Map<DecodeHintType, unknown>();
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-        BarcodeFormat.EAN_13,
-        BarcodeFormat.EAN_8,
-        BarcodeFormat.UPC_A,
-        BarcodeFormat.UPC_E,
-      ]);
-      hints.set(DecodeHintType.TRY_HARDER, true);
-
-      const codeReader = new BrowserMultiFormatReader(hints, {
-        delayBetweenScanAttempts: 70,
-        delayBetweenScanSuccess: 350,
-      });
-
-      const baseVideoConstraints: MediaTrackConstraints = deviceIdToUse
+      const videoConstraints: ExtendedVideoConstraints = deviceIdToUse
         ? {
             deviceId: { exact: deviceIdToUse },
             width: { ideal: 1920 },
             height: { ideal: 1080 },
-            frameRate: { ideal: 30, max: 60 },
+            frameRate: { ideal: 30 },
+            advanced: [
+              { focusMode: "continuous" },
+              { exposureMode: "continuous" },
+              { whiteBalanceMode: "continuous" },
+            ],
           }
         : {
             facingMode: { ideal: "environment" },
             width: { ideal: 1920 },
             height: { ideal: 1080 },
-            frameRate: { ideal: 30, max: 60 },
+            frameRate: { ideal: 30 },
+            advanced: [
+              { focusMode: "continuous" },
+              { exposureMode: "continuous" },
+              { whiteBalanceMode: "continuous" },
+            ],
           };
 
-      const videoConstraints = {
-        ...baseVideoConstraints,
-        advanced: [
-          { focusMode: "continuous" },
-          { exposureMode: "continuous" },
-          { whiteBalanceMode: "continuous" },
-        ],
-      } as CameraConstraintPatch;
-
       setIsScanning(true);
-      setScanStatus("Point the camera at the barcode.");
+      setScanStatus("Point the camera at a barcode or QR code.");
       setFocusStatus("Starting camera focus...");
 
-      const onScan = async (result: { getText: () => string } | undefined) => {
-        if (!result || isHandlingScanRef.current) return;
-
-        const scannedCode = result.getText().trim();
-        if (!scannedCode) return;
-
-        isHandlingScanRef.current = true;
-        setScanStatus(`Barcode found: ${scannedCode}. Searching...`);
-        setBarcode(scannedCode);
-        stopScanner();
-        await fetchProduct(scannedCode);
-      };
-
-      const controls = await codeReader.decodeFromConstraints(
+      await scanner.start(
+        deviceIdToUse || { facingMode: "environment" },
         {
-          video: videoConstraints,
-          audio: false,
+          fps: 12,
+          aspectRatio: 1.7777778,
+          disableFlip: false,
+          videoConstraints,
+          qrbox: (viewfinderWidth, viewfinderHeight) => {
+            const width = Math.floor(Math.min(viewfinderWidth * 0.82, 420));
+            const height = Math.floor(Math.min(viewfinderHeight * 0.46, 230));
+            return { width, height };
+          },
         },
-        videoRef.current,
-        onScan,
+        (decodedText, result) => {
+          void handleDecodedValue(decodedText, result);
+        },
+        () => {
+          // Scanning libraries call this many times while searching. Keep UI quiet.
+        },
       );
-
-      controlsRef.current = controls;
 
       window.setTimeout(() => {
         void readCameraCapabilities();
-      }, 450);
+      }, 500);
 
       void fetchDevices();
     } catch (err) {
@@ -420,30 +483,65 @@ export default function ProductScanner() {
     }
   }, [
     fetchDevices,
-    fetchProduct,
+    getOrCreateScanner,
+    handleDecodedValue,
     readCameraCapabilities,
     resetCameraControls,
     selectedDeviceId,
-    stopScanner,
   ]);
 
   const handleManualSearch = async () => {
     const cleanCode = manualBarcode.trim();
 
     if (!cleanCode) {
-      setError("Enter a barcode first.");
+      setError("Enter a barcode or code content first.");
       return;
     }
 
+    setError("");
     setBarcode(cleanCode);
-    stopScanner();
-    setScanStatus(`Searching barcode ${cleanCode}...`);
-    await fetchProduct(cleanCode);
+    setScannedContent({
+      value: cleanCode,
+      format: "Typed code",
+      isProductCode: isLikelyProductBarcode(cleanCode),
+      isUrl: isLikelyUrl(cleanCode),
+    });
+
+    await stopScanner();
+
+    if (isLikelyProductBarcode(cleanCode)) {
+      setScanStatus(`Searching barcode ${cleanCode}...`);
+      await fetchProduct(cleanCode);
+      return;
+    }
+
+    setProductResult(null);
+    setScanStatus("Typed content is shown below.");
+  };
+
+  const handleFileScan = async (file: File | undefined) => {
+    if (!file) return;
+
+    setError("");
+    setProductResult(null);
+    setScannedContent(null);
+    isHandlingScanRef.current = false;
+
+    try {
+      await stopScanner();
+      const scanner = await getOrCreateScanner();
+      setScanStatus("Scanning image...");
+      const result = await scanner.scanFileV2(file, false);
+      await handleDecodedValue(result.decodedText, result);
+    } catch (err) {
+      setScanStatus("Could not read code from image.");
+      setError(getCameraErrorMessage(err));
+    }
   };
 
   useEffect(() => {
     return () => {
-      stopScanner();
+      void stopScanner();
     };
   }, [stopScanner]);
 
@@ -467,7 +565,7 @@ export default function ProductScanner() {
             disabled={!isScanning}
             aria-label="Tap to refocus camera"
           >
-            <video ref={videoRef} className="scanner-video" muted playsInline />
+            <div id={SCANNER_REGION_ID} className="html5-scanner-region" />
             {!isScanning && (
               <div className="video-placeholder">
                 <span>Open camera</span>
@@ -536,30 +634,21 @@ export default function ProductScanner() {
                 Start scanner
               </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={stopScanner}
-                  className="secondary"
-                >
-                  Stop scanner
-                </button>
-                <button type="button" onClick={handleManualSearch}>
-                  Search typed code
-                </button>
-              </>
+              <button type="button" onClick={() => void stopScanner()} className="secondary">
+                Stop scanner
+              </button>
             )}
           </div>
 
           <div className="manual-search">
-            <label htmlFor="manualBarcode">Search with barcode</label>
+            <label htmlFor="manualBarcode">Search with barcode or code content</label>
             <div>
               <input
                 id="manualBarcode"
                 value={manualBarcode}
                 onChange={(event) => setManualBarcode(event.target.value)}
-                placeholder="Enter barcode"
-                inputMode="numeric"
+                placeholder="Enter barcode, QR text or URL"
+                inputMode="text"
               />
               <button type="button" onClick={handleManualSearch}>
                 Search
@@ -567,9 +656,19 @@ export default function ProductScanner() {
             </div>
           </div>
 
+          <div className="file-scan">
+            <label htmlFor="codeImage">Scan from image</label>
+            <input
+              id="codeImage"
+              type="file"
+              accept="image/*"
+              onChange={(event) => void handleFileScan(event.target.files?.[0])}
+            />
+          </div>
+
           {barcode && (
             <p className="barcode">
-              Last barcode: <strong>{barcode}</strong>
+              Last code: <strong>{barcode}</strong>
             </p>
           )}
 
@@ -578,14 +677,19 @@ export default function ProductScanner() {
         </div>
 
         <div className="result-area">
-          {!productResult && !loadingProduct && (
+          {!productResult && !loadingProduct && !scannedContent && (
             <div className="empty-state">
               <h2>Ready when you are</h2>
               <p>
-                Use your camera or enter a barcode manually to see product
-                ingredients, nutrition and health flags.
+                Use your camera, upload an image or enter a code manually. Product
+                barcodes can show ingredients, nutrition and health flags. Other
+                codes show their raw content.
               </p>
             </div>
+          )}
+
+          {scannedContent && !scannedContent.isProductCode && (
+            <ScannedContentCard content={scannedContent} />
           )}
 
           {productResult && !productResult.found && (
@@ -606,6 +710,22 @@ export default function ProductScanner() {
         </div>
       </div>
     </section>
+  );
+}
+
+function ScannedContentCard({ content }: { content: ScannedContent }) {
+  return (
+    <article className="result-card content-card">
+      <p className="eyebrow">Code found</p>
+      <h2>Scanned content</h2>
+      <div className="raw-code-box">{content.value}</div>
+      <p className="brand">Format: {content.format}</p>
+      {content.isUrl && (
+        <a href={content.value} target="_blank" rel="noreferrer" className="safe-link">
+          Open link
+        </a>
+      )}
+    </article>
   );
 }
 
