@@ -1,29 +1,8 @@
-# Product Scanner PWA
+# Your Health Scanner
 
-A small Next.js PWA MVP for scanning food product barcodes and fetching product data from Open Food Facts.
+By Robert "Rob-One" Wägar.
 
-## Stack
-
-- Next.js 16.2.7 App Router
-- React 19.2.7
-- TypeScript 5.9.3
-- ESLint 9.39.1
-- `@zxing/browser` 0.2.0 for barcode scanning
-- Open Food Facts API
-- PWA manifest + service worker
-- No login
-- No database
-- No API key needed
-
-## Node version
-
-This project is set to Node 24 because the latest ZXing dependency expects Node 24+ during install.
-
-Vercel supports Node 24 and uses it by default for new projects. If needed, set it manually in Vercel:
-
-```txt
-Project Settings → Build and Deployment → Node.js Version → 24.x
-```
+A small Next.js PWA that lets a user scan a product barcode, search product data and show ingredients, nutrition, allergens and simple health flags.
 
 ## Run locally
 
@@ -38,8 +17,6 @@ Open:
 http://localhost:3000
 ```
 
-Camera access should work on `localhost`. On mobile or production it must run on HTTPS, so Vercel is good for testing.
-
 ## Build
 
 ```bash
@@ -47,55 +24,41 @@ npm run build
 npm run start
 ```
 
-## Lint and type-check
+## Deploy to Vercel
 
-Next.js 16 removed `next lint`, so this project uses the ESLint CLI directly.
+Use the default Next.js preset.
 
-```bash
-npm run lint
-npm run type-check
-```
+Recommended Node version: **24.x**.
 
-This zip was checked with:
+## API keys
 
-```bash
-npm run lint
-npm run type-check
-npm run build
-```
+No API key is needed for this first version.
 
-## Test without camera
-
-Use the manual barcode field with:
+The app uses a server-side Next.js API route:
 
 ```txt
-3017620422003
+/app/api/product/route.ts
 ```
 
-## API key
+That route searches public product data by barcode. The browser never calls the external product API directly.
 
-No API key is needed for the current Open Food Facts API call.
+## Libraries
 
-Before a real launch, update the `User-Agent` in:
+Main dependencies:
 
 ```txt
-app/api/product/route.ts
+next
+react
+react-dom
+@zxing/browser
+@zxing/library
+typescript
+eslint
+eslint-config-next
 ```
-
-Example:
-
-```ts
-"User-Agent": "YourAppName/0.1 (your@email.com)"
-```
-
-## Fixed in this version
-
-- Fixed Vercel/TypeScript manifest error by replacing `purpose: "any maskable"` with separate `any` and `maskable` icon entries.
-- Fixed camera device list keys.
-- Fixed ESLint rule issue caused by setting state from the initial effect.
-- Added clearer camera permission error messages.
-- Updated package versions and included `package-lock.json`.
 
 ## Notes
 
-Product data can be incomplete or wrong because Open Food Facts is an open/crowdsourced database. Always show a disclaimer and do not present the result as medical advice.
+Camera access requires localhost during development or HTTPS in production. Vercel provides HTTPS automatically.
+
+Product data can be incomplete. Always read the package label and use the app as guidance, not medical advice.

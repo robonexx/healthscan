@@ -47,7 +47,7 @@ function getCameraErrorMessage(error: unknown) {
       error.name === "NotAllowedError" ||
       error.name === "PermissionDeniedError"
     ) {
-      return "Camera permission was denied. Allow camera access in the browser settings and try again.";
+      return "Camera access was denied. Allow camera access in your browser settings and try again.";
     }
 
     if (
@@ -58,29 +58,30 @@ function getCameraErrorMessage(error: unknown) {
     }
 
     if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-      return "The camera could not be started. Close Zoom/Teams/OBS or other apps using the camera and try again.";
+      return "The camera could not be started. Close other apps using the camera and try again.";
     }
 
     if (
       error.name === "OverconstrainedError" ||
       error.name === "ConstraintNotSatisfiedError"
     ) {
-      return "The selected camera did not match the requested settings. Try another camera.";
+      return "The selected camera could not use the requested settings. Try another camera.";
     }
   }
 
   return error instanceof Error
     ? error.message
-    : "Could not start camera scanner. Test on localhost or HTTPS and allow camera permission.";
+    : "Could not start the camera. Allow camera access and try again.";
 }
 
 export default function ProductScanner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
+  const isHandlingScanRef = useRef(false);
 
   const [isScanning, setIsScanning] = useState(false);
   const [barcode, setBarcode] = useState("");
-  const [manualBarcode, setManualBarcode] = useState("3017620422003");
+  const [manualBarcode, setManualBarcode] = useState("");
   const [productResult, setProductResult] = useState<ProductResult | null>(
     null,
   );
@@ -90,15 +91,14 @@ export default function ProductScanner() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(
     undefined,
   );
-  const [scanStatus, setScanStatus] = useState("Scanner is stopped.");
-  const isHandlingScanRef = useRef(false);
+  const [scanStatus, setScanStatus] = useState("Ready to scan.");
 
   const stopScanner = useCallback(() => {
     controlsRef.current?.stop();
     controlsRef.current = null;
     isHandlingScanRef.current = false;
     setIsScanning(false);
-    setScanStatus("Scanner is stopped.");
+    setScanStatus("Scanner stopped.");
   }, []);
 
   const fetchDevices = useCallback(async () => {
@@ -114,7 +114,7 @@ export default function ProductScanner() {
       setDevices(mappedDevices);
 
       const backCamera = mappedDevices.find((device) =>
-        /back|rear|environment/i.test(device.label),
+        /back|rear|environment|bak|baksida/i.test(device.label),
       );
       const preferredDeviceId =
         backCamera?.deviceId || mappedDevices[0]?.deviceId;
@@ -125,7 +125,6 @@ export default function ProductScanner() {
 
       return preferredDeviceId;
     } catch {
-      // Device labels often require camera permission first. Scanner can still start.
       return undefined;
     }
   }, [selectedDeviceId]);
@@ -146,7 +145,7 @@ export default function ProductScanner() {
       const data = (await response.json()) as ProductResult;
       setProductResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not fetch product.");
+      setError(err instanceof Error ? err.message : "Could not search product.");
     } finally {
       setLoadingProduct(false);
     }
@@ -158,31 +157,47 @@ export default function ProductScanner() {
     isHandlingScanRef.current = false;
 
     if (!videoRef.current) {
-      setError("Video element not ready.");
+      setError("Camera preview is not ready yet.");
       return;
     }
 
     try {
       const preferredDeviceId = await fetchDevices();
-      const deviceIdToUse = selectedDeviceId || preferredDeviceId || undefined;
+      const deviceIdToUse = selectedDeviceId || preferredDeviceId;
 
-      const hints = new Map();
+      const hints = new Map<DecodeHintType, unknown>();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.UPC_A,
         BarcodeFormat.UPC_E,
         BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.ITF,
       ]);
       hints.set(DecodeHintType.TRY_HARDER, true);
 
       const codeReader = new BrowserMultiFormatReader(hints, {
-        delayBetweenScanAttempts: 150,
-        delayBetweenScanSuccess: 500,
+        delayBetweenScanAttempts: 90,
+        delayBetweenScanSuccess: 350,
       });
 
+      const videoConstraints: MediaTrackConstraints = deviceIdToUse
+        ? {
+            deviceId: { exact: deviceIdToUse },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          }
+        : {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          };
+
       setIsScanning(true);
-      setScanStatus("Camera is open. Looking for a barcode...");
+      setScanStatus("Point the camera at the barcode.");
 
       const onScan = async (result: { getText: () => string } | undefined) => {
         if (!result || isHandlingScanRef.current) return;
@@ -191,32 +206,23 @@ export default function ProductScanner() {
         if (!scannedCode) return;
 
         isHandlingScanRef.current = true;
-        setScanStatus(`Barcode found: ${scannedCode}. Searching product...`);
+        setScanStatus(`Barcode found: ${scannedCode}. Searching...`);
         setBarcode(scannedCode);
         stopScanner();
         await fetchProduct(scannedCode);
       };
 
-      const controls = deviceIdToUse
-        ? await codeReader.decodeFromVideoDevice(
-            deviceIdToUse,
-            videoRef.current,
-            onScan,
-          )
-        : await codeReader.decodeFromConstraints(
-            {
-              video: {
-                facingMode: { ideal: "environment" },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-              audio: false,
-            },
-            videoRef.current,
-            onScan,
-          );
+      const controls = await codeReader.decodeFromConstraints(
+        {
+          video: videoConstraints,
+          audio: false,
+        },
+        videoRef.current,
+        onScan,
+      );
 
       controlsRef.current = controls;
+      void fetchDevices();
     } catch (err) {
       setIsScanning(false);
       setScanStatus("Scanner could not start.");
@@ -228,7 +234,7 @@ export default function ProductScanner() {
     const cleanCode = manualBarcode.trim();
 
     if (!cleanCode) {
-      setError("Write a barcode first.");
+      setError("Enter a barcode first.");
       return;
     }
 
@@ -247,11 +253,11 @@ export default function ProductScanner() {
   return (
     <section className="scanner-card">
       <header className="scanner-header">
-        <p className="eyebrow">Next.js PWA MVP</p>
-        <h1>Product Scanner</h1>
+        <p className="eyebrow">By Robert &quot;Rob-One&quot; Wägar</p>
+        <h1>Your Health Scanner</h1>
         <p>
-          Scan a barcode, fetch product data from Open Food Facts and show
-          ingredients, nutrition, allergens and simple health flags.
+          Scan a barcode, search product data and facts and show ingredients,
+          nutrition, allergens and simple health flags.
         </p>
       </header>
 
@@ -261,7 +267,7 @@ export default function ProductScanner() {
             <video ref={videoRef} className="scanner-video" muted playsInline />
             {!isScanning && (
               <div className="video-placeholder">
-                <span>Camera preview</span>
+                <span>Open camera</span>
               </div>
             )}
             {isScanning && <div className="scan-frame" aria-hidden="true" />}
@@ -311,13 +317,13 @@ export default function ProductScanner() {
           </div>
 
           <div className="manual-search">
-            <label htmlFor="manualBarcode">Or test with barcode</label>
+            <label htmlFor="manualBarcode">Search with barcode</label>
             <div>
               <input
                 id="manualBarcode"
                 value={manualBarcode}
                 onChange={(event) => setManualBarcode(event.target.value)}
-                placeholder="Example: 3017620422003"
+                placeholder="Enter barcode"
                 inputMode="numeric"
               />
               <button type="button" onClick={handleManualSearch}>
@@ -332,17 +338,17 @@ export default function ProductScanner() {
             </p>
           )}
 
-          {loadingProduct && <p className="status">Loading product...</p>}
+          {loadingProduct && <p className="status">Searching product...</p>}
           {error && <p className="error">{error}</p>}
         </div>
 
         <div className="result-area">
           {!productResult && !loadingProduct && (
             <div className="empty-state">
-              <h2>Ready to scan</h2>
+              <h2>Ready when you are</h2>
               <p>
-                Use your phone camera or search manually. Camera access needs
-                localhost in dev or HTTPS in production.
+                Use your camera or enter a barcode manually to see product
+                ingredients, nutrition and health flags.
               </p>
             </div>
           )}
@@ -353,8 +359,8 @@ export default function ProductScanner() {
               <p>{productResult.message}</p>
               <p>Barcode: {productResult.barcode}</p>
               <p>
-                That means the API was reached, but Open Food Facts did not have
-                that product yet.
+                The barcode was read, but no matching product data was found.
+                Try another product or check that the full barcode is correct.
               </p>
             </div>
           )}

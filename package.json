@@ -1,6 +1,6 @@
 {
-  "name": "product-scanner-pwa",
-  "version": "0.3.0",
+  "name": "your-health-scanner",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,8 +11,8 @@
     "type-check": "next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "@zxing/browser": "^0.2.0",
-    "@zxing/library": "^0.23.0",
+    "@zxing/browser": "0.2.0",
+    "@zxing/library": "0.22.0",
     "next": "^16.2.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

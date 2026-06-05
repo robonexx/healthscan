@@ -2,14 +2,15 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Product Scanner PWA",
-    short_name: "Scanner",
-    description: "Scan products and view ingredients, nutrition, allergens and additives.",
+    name: "Your Health Scanner",
+    short_name: "Health Scanner",
+    description:
+      "Scan products and view ingredients, nutrition, allergens and simple health flags.",
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#111111",
-    theme_color: "#111111",
+    background_color: "#07140d",
+    theme_color: "#43b96f",
     orientation: "portrait",
     categories: ["health", "food", "utilities"],
     icons: [

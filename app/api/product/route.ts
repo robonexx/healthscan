@@ -66,15 +66,14 @@ export async function GET(request: NextRequest) {
 
     const response = await fetch(url, {
       headers: {
-        // Change this before real launch to your own app name/email.
-        "User-Agent": "ProductScannerPWA/0.1 (test@example.com)",
+        "User-Agent": "YourHealthScanner/0.4 (robertwagar@gmail.com)",
       },
       next: { revalidate: 60 * 60 * 24 },
     });
 
     if (!response.ok) {
       return NextResponse.json(
-        { found: false, barcode, message: "Could not fetch product." },
+        { found: false, barcode, message: "Could not search product." },
         { status: response.status }
       );
     }
@@ -83,7 +82,7 @@ export async function GET(request: NextRequest) {
 
     if (data.status !== 1 || !data.product) {
       return NextResponse.json(
-        { found: false, barcode, message: "Product not found in Open Food Facts." },
+        { found: false, barcode, message: "Product not found." },
         { status: 404 }
       );
     }
