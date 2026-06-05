@@ -10,6 +10,7 @@ import type {
 type ProductResult = {
   found: boolean;
   barcode: string;
+  source?: string;
   message?: string;
   product?: {
     code: string;
@@ -65,6 +66,56 @@ type ExtendedVideoConstraints = MediaTrackConstraints & {
 };
 
 const SCANNER_REGION_ID = "health-scanner-camera-region";
+const PRODUCT_CACHE_PREFIX = "your-health-scanner:product:";
+const PRODUCT_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 30;
+
+type CachedProductResult = {
+  savedAt: number;
+  data: ProductResult;
+};
+
+function getProductCacheKey(code: string) {
+  return `${PRODUCT_CACHE_PREFIX}${code.trim()}`;
+}
+
+function readCachedProduct(code: string) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(getProductCacheKey(code));
+    if (!raw) return null;
+
+    const cached = JSON.parse(raw) as CachedProductResult;
+    const isFresh = Date.now() - cached.savedAt < PRODUCT_CACHE_MAX_AGE;
+
+    if (!isFresh) {
+      window.localStorage.removeItem(getProductCacheKey(code));
+      return null;
+    }
+
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProduct(code: string, data: ProductResult) {
+  if (typeof window === "undefined" || !data.found) return;
+
+  try {
+    const cacheItem: CachedProductResult = {
+      savedAt: Date.now(),
+      data,
+    };
+
+    window.localStorage.setItem(
+      getProductCacheKey(code),
+      JSON.stringify(cacheItem),
+    );
+  } catch {
+    // localStorage can be full or blocked. The app still works without cache.
+  }
+}
 
 function getCameraErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -108,6 +159,7 @@ function getFormatName(result?: Html5QrcodeResult) {
 
 export default function ProductScanner() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isHandlingScanRef = useRef(false);
 
   const [isScanning, setIsScanning] = useState(false);
@@ -134,6 +186,7 @@ export default function ProductScanner() {
   const [zoomMin, setZoomMin] = useState(1);
   const [zoomMax, setZoomMax] = useState(1);
   const [zoomStep, setZoomStep] = useState(0.1);
+  const [selectedFileName, setSelectedFileName] = useState("");
 
   const resetCameraControls = useCallback(() => {
     setTorchSupported(false);
@@ -233,8 +286,17 @@ export default function ProductScanner() {
     if (!cleanCode) return;
 
     setError("");
-    setLoadingProduct(true);
     setProductResult(null);
+
+    const cachedProduct = readCachedProduct(cleanCode);
+
+    if (cachedProduct) {
+      setProductResult(cachedProduct);
+      setScanStatus("Product loaded from saved scan.");
+      return;
+    }
+
+    setLoadingProduct(true);
 
     try {
       const response = await fetch(
@@ -242,6 +304,10 @@ export default function ProductScanner() {
       );
       const data = (await response.json()) as ProductResult;
       setProductResult(data);
+
+      if (data.found) {
+        writeCachedProduct(cleanCode, data);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not search product.");
     } finally {
@@ -519,9 +585,22 @@ export default function ProductScanner() {
     setScanStatus("Typed content is shown below.");
   };
 
+  const clearSelectedFile = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
+    setSelectedFileName("");
+
+    if (!isScanning) {
+      setScanStatus("Ready to scan.");
+    }
+  };
+
   const handleFileScan = async (file: File | undefined) => {
     if (!file) return;
 
+    setSelectedFileName(file.name);
     setError("");
     setProductResult(null);
     setScannedContent(null);
@@ -659,11 +738,20 @@ export default function ProductScanner() {
           <div className="file-scan">
             <label htmlFor="codeImage">Scan from image</label>
             <input
+              ref={fileInputRef}
               id="codeImage"
               type="file"
               accept="image/*"
               onChange={(event) => void handleFileScan(event.target.files?.[0])}
             />
+            {selectedFileName && (
+              <div className="selected-file-row">
+                <span>{selectedFileName}</span>
+                <button type="button" className="secondary small-button" onClick={clearSelectedFile}>
+                  Remove image
+                </button>
+              </div>
+            )}
           </div>
 
           {barcode && (

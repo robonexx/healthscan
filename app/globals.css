@@ -440,3 +440,29 @@ h1 {
   font-weight: 900;
   text-decoration: none;
 }
+
+.selected-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 0.6rem;
+  background: rgba(5, 20, 11, 0.42);
+  color: var(--muted);
+}
+
+.selected-file-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.small-button {
+  flex: 0 0 auto;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.86rem;
+}
